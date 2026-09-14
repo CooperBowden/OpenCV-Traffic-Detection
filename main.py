@@ -5,6 +5,7 @@ import time
 from collections import defaultdict, deque
 from typing import Dict, List, Tuple
 import configparser
+from typing import List, Optional
 
 import cv2
 import numpy as np
@@ -92,6 +93,63 @@ def draw_translucent_panel(
         cv2.rectangle(frame, (x1, y1), (x2 - 1, y2 - 1), border_color, 1)
 
 
+def display_birds_eye(
+    frame: np.ndarray,
+    objects: Optional[List[dict]] = None,
+    src_pts: np.float32 = None,
+    warp_background: bool = False
+) -> np.ndarray:
+
+    bev_width, bev_height = 400, 600
+    dst_pts = np.float32([
+        [0, 0],                  # Top-Left
+        [bev_width, 0],          # Top-Right
+        [bev_width, bev_height], # Bottom-Right
+        [0, bev_height]          # Bottom-Left
+    ])
+
+    # Compute perspective transformation matrix
+    matrix = cv2.getPerspectiveTransform(src_pts, dst_pts)
+
+    # Warp the background image for BEV, or create a blank canvas
+    if warp_background:
+        bev_canvas = cv2.warpPerspective(frame, matrix, (bev_width, bev_height))
+    else:
+        bev_canvas = np.zeros((bev_height, bev_width, 3), dtype=np.uint8)
+        bev_canvas[:] = (255, 255, 255)
+
+    if objects:
+        # Extract ground contact points (bottom-center of bounding box)
+        ground_points = []
+        for obj in objects:
+            x1, y1, x2, y2 = map(float, obj["box"])
+            x_center = (x1 + x2) / 2.0
+            y_bottom = y2
+            ground_points.append([x_center, y_bottom])
+
+        # Format points as (N, 1, 2) for OpenCV transformation
+        input_pts = np.array(ground_points, dtype=np.float32).reshape(-1, 1, 2)
+        transformed_pts = cv2.perspectiveTransform(input_pts, matrix).reshape(-1, 2)
+
+        # Iterate directly over paired objects and transformed points
+        for obj, (bev_x, bev_y) in zip(objects, transformed_pts):
+            tid = obj.get("id", "N/A")
+            speed = obj.get("speed")
+            cls_name = obj.get("class")
+            bx, by = int(bev_x), int(bev_y)
+
+            # Draw top-down point on BEV canvas if within bounds
+            if 0 <= bx < bev_width and 0 <= by < bev_height:
+                primary_color = COLOR_STOPPED if speed < 0.6 else COLOR_VEHICLE
+                cv2.circle(bev_canvas, (bx, by), 6, primary_color, -1)
+                label_text = f"#{tid} {cls_name} | {speed:.1f} px/f"
+                cv2.putText(
+                    bev_canvas, label_text, (bx + 8, by + 4),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0,0,0), 1
+                )
+
+    return bev_canvas
+
 class IntersectionAnalytics:
     """Tracks historical metrics, cumulative counts, and intersection statistics."""
 
@@ -155,10 +213,16 @@ def render_dashboard(
     active_pedestrians: List[dict],
     show_trails: bool = True,
     show_hud: bool = True,
+    byv_box: any = None,
 ) -> np.ndarray:
     """Renders visual overlays, tracking trajectories, and dashboard analytics HUD."""
     annotated = frame.copy()
     h, w = frame.shape[:2]
+
+    byv_pts = byv_box.reshape((-1, 1, 2)).astype(np.int32)
+
+    # Draw birds eye view box over main camera
+    cv2.polylines(annotated, [byv_pts], isClosed=True, color=(255, 0, 0), thickness=2)
 
     # 1. Render Object Trails and Bounding Boxes
     all_objects = [("vehicle", v) for v in active_vehicles] + [("pedestrian", p) for p in active_pedestrians]
@@ -290,6 +354,15 @@ def main():
     display_scale = config.getfloat('gui', 'display-scale')
     disp_w, disp_h = int(width * display_scale), int(height * display_scale)
 
+    # coordinates for birds eye view box of road, TODO move to a new spot later (ie settings.ini)
+    road_coords = np.float32([
+        [128, 138],
+        [231, 134],
+        [318, 173],
+        [149, 212],
+    ])
+    road_coords = np.multiply(road_coords, display_scale)
+
     # Tracking trajectories: {track_id: deque([(x, y), ...])}
     track_history = defaultdict(lambda: deque(maxlen=30))
     analytics = IntersectionAnalytics()
@@ -398,12 +471,16 @@ def main():
                 active_pedestrians=active_pedestrians,
                 show_trails=show_trails,
                 show_hud=show_hud,
+                byv_box=road_coords
             )
+
+            byv_frame = display_birds_eye(frame, active_vehicles, road_coords, True)
 
             if writer:
                 writer.write(annotated_frame)
 
             cv2.imshow("Intersection Analytics Dashboard", annotated_frame)
+            cv2.imshow("Intersection birds eye view", byv_frame)
 
         elapsed = time.time() - loop_start
         sleep_delay = stream.get_sleep_interval(elapsed)
