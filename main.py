@@ -166,7 +166,6 @@ def display_birds_eye(
     warp_background: bool = False
 ) -> np.ndarray:
 
-
     bev_width, bev_height = 400, 600
     dst_pts = np.float32([
         [0, 0],                  # Top-Left
@@ -180,10 +179,10 @@ def display_birds_eye(
 
     # Warp the background image for BEV, or create a blank canvas
     if warp_background:
-        bev_canvas = cv2.warpPerspective(frame, matrix, (bev_width, bev_height))
+        bev_frame = cv2.warpPerspective(frame, matrix, (bev_width, bev_height))
     else:
-        bev_canvas = np.zeros((bev_height, bev_width, 3), dtype=np.uint8)
-        bev_canvas[:] = (255, 255, 255)
+        bev_frame = np.zeros((bev_height, bev_width, 3), dtype=np.uint8)
+        bev_frame[:] = (255, 255, 255)
 
     if objects:
         # Extract ground contact points (bottom-center of bounding box)
@@ -208,14 +207,14 @@ def display_birds_eye(
             # Draw top-down point on BEV canvas if within bounds
             if 0 <= bx < bev_width and 0 <= by < bev_height:
                 primary_color = COLOR_STOPPED if speed < 0.6 else COLOR_VEHICLE
-                cv2.circle(bev_canvas, (bx, by), 6, primary_color, -1)
+                cv2.circle(bev_frame, (bx, by), 6, primary_color, -1)
                 label_text = f"#{tid} {cls_name} | {speed:.1f} px/f"
                 cv2.putText(
-                    bev_canvas, label_text, (bx + 8, by + 4),
+                    bev_frame, label_text, (bx + 8, by + 4),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0,0,0), 1
                 )
 
-    return bev_canvas
+    return bev_frame
 
 class IntersectionAnalytics:
     """Tracks historical metrics, cumulative counts, and intersection statistics."""
@@ -301,6 +300,7 @@ def render_dashboard(
         speed = obj["speed"]
         heading = obj["heading"]
         history = obj["history"]
+        bev_history = obj["bev_history"]
 
         # Determine theme color
         if obj_type == "pedestrian":
@@ -433,6 +433,7 @@ def main():
 
     # Tracking trajectories: {track_id: deque([(x, y), ...])}
     track_history = defaultdict(lambda: deque(maxlen=30))
+    track_bev_history = defaultdict(lambda: deque(maxlen=30))
     analytics = IntersectionAnalytics()
 
     writer = None
@@ -482,6 +483,34 @@ def main():
             active_pedestrians = []
             current_active_ids = set()
 
+            if (len(road_coords) != 4):
+                calibrate(frame, config['gui']['source'], display_scale)
+                with open("config.json", "r") as file:
+                    data = json.load(file)
+                road_coords = np.float32(data[config['gui']['source']]["points"])
+                road_coords = np.multiply(road_coords, display_scale)
+            # bev_frame = display_birds_eye(frame, results.boxes, road_coords, byv_background)
+
+            bev_width, bev_height = 400, 600
+            dst_pts = np.float32([
+                [0, 0],  # Top-Left
+                [bev_width, 0],  # Top-Right
+                [bev_width, bev_height],  # Bottom-Right
+                [0, bev_height]  # Bottom-Left
+            ])
+
+            # Compute perspective transformation matrix
+            matrix = cv2.getPerspectiveTransform(road_coords, dst_pts)
+
+            # Warp the background image for BEV, or create a blank canvas
+            if byv_background:
+                bev_frame = cv2.warpPerspective(frame, matrix, (bev_width, bev_height))
+            else:
+                bev_frame = np.zeros((bev_height, bev_width, 3), dtype=np.uint8)
+                bev_frame[:] = (255, 255, 255)
+
+
+
             if results.boxes is not None and results.boxes.id is not None:
                 boxes = results.boxes.xyxy.cpu().numpy()
                 track_ids = results.boxes.id.int().cpu().numpy()
@@ -492,9 +521,17 @@ def main():
                     current_active_ids.add(track_id)
                     x1, y1, x2, y2 = box
                     center_pt = ((x1 + x2) / 2.0, (y1 + y2) / 2.0)
-
                     track_history[track_id].append(center_pt)
-                    velocity, speed, heading = calculate_motion_stats(track_history[track_id])
+
+                    # Format points as (N, 1, 2) for OpenCV transformation
+                    input_pts = np.array(center_pt, dtype=np.float32).reshape(-1, 1, 2)
+                    transformed_pts = cv2.perspectiveTransform(input_pts, matrix).reshape(-1, 2).astype(int)[0]
+
+                    bx, by = transformed_pts
+
+                    track_bev_history[track_id].append(transformed_pts)
+                    # calculate motion statics using birds eye view position
+                    velocity, speed, heading = calculate_motion_stats(track_bev_history[track_id])
 
                     cls_label = ALL_TARGET_CLASSES.get(cls_id, model.names.get(cls_id, "object"))
 
@@ -507,12 +544,32 @@ def main():
                         "speed": speed,
                         "heading": heading,
                         "history": list(track_history[track_id]),
+                        "bev_history": list(track_history[track_id]),
                     }
+
+
+                    # Draw top-down point on BEV canvas if within bounds
+                    if 0 <= bx < bev_width and 0 <= by < bev_height:
+                        primary_color = COLOR_STOPPED if speed < 0.6 else COLOR_VEHICLE
+                        cv2.circle(bev_frame, (bx, by), 6, primary_color, -1)
+                        label_text = f"#{track_id} {cls_label} | {speed:.1f} px/f"
+                        cv2.putText(
+                            bev_frame, label_text, (bx + 8, by + 4),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 0), 1
+                        )
 
                     if cls_id in PEDESTRIAN_CLASSES:
                         active_pedestrians.append(obj_data)
                     else:
                         active_vehicles.append(obj_data)
+
+                        # Extract ground contact points (bottom-center of bounding box)
+                        ground_points = []
+                    x_center = (x1 + x2) / 2.0
+                    y_bottom = y2
+                    ground_points.append([x_center, y_bottom])
+
+
 
             # Clean up stale track histories not seen for a long time
             for tid in list(track_history.keys()):
@@ -520,6 +577,11 @@ def main():
                     track_history[tid].popleft()
                     if len(track_history[tid]) == 0:
                         del track_history[tid]
+            for tid in list(track_bev_history.keys()):
+                if tid not in current_active_ids and len(track_bev_history[tid]) > 0:
+                    track_bev_history[tid].popleft()
+                    if len(track_bev_history[tid]) == 0:
+                        del track_bev_history[tid]
 
             # Update FPS calculation
             now = time.time()
@@ -529,6 +591,7 @@ def main():
                 fps_timer = now
 
             analytics.update(active_vehicles, active_pedestrians, current_fps)
+
 
             # Render Dashboard
             annotated_frame = render_dashboard(
@@ -541,19 +604,13 @@ def main():
                 show_hud=show_hud,
                 byv_box=road_coords
             )
-            if (len(road_coords) != 4):
-                calibrate(frame, config['gui']['source'], display_scale)
-                with open("config.json", "r") as file:
-                    data = json.load(file)
-                road_coords = np.float32(data[config['gui']['source']]["points"])
-                road_coords = np.multiply(road_coords, display_scale)
-            byv_frame = display_birds_eye(frame, active_vehicles, road_coords, byv_background)
+
 
             if writer:
                 writer.write(annotated_frame)
 
             cv2.imshow("Intersection Analytics Dashboard", annotated_frame)
-            cv2.imshow("Intersection birds eye view", byv_frame)
+            cv2.imshow("Intersection birds eye view", bev_frame)
 
         elapsed = time.time() - loop_start
         sleep_delay = stream.get_sleep_interval(elapsed)
