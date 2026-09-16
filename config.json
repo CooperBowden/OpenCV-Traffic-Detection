@@ -1,0 +1,31 @@
+{
+    "warwick_hiden": {
+        "name": "US-60 / Warwick Blvd & Hiden Blvd (Newport News, VA)",
+        "id": "newportcam028",
+        "url": "https://media-sfs2.vdotcameras.com/rtplive/newportcam028/playlist.m3u8",
+        "points": []
+    },
+    "i64_mm259": {
+        "name": "I-64 EB at MM 259.8",
+        "id": "HamptonRoads819",
+        "url": "https://media-sfs2.vdotcameras.com/rtplive/HamptonRoads819/chunklist_w527335376.m3u8",
+        "points": [
+            [
+                183,
+                37
+            ],
+            [
+                274,
+                56
+            ],
+            [
+                194,
+                237
+            ],
+            [
+                5,
+                115
+            ]
+        ]
+    }
+}

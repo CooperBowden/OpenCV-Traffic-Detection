@@ -6,6 +6,7 @@ from collections import defaultdict, deque
 from typing import Dict, List, Tuple
 import configparser
 from typing import List, Optional
+import json
 
 import cv2
 import numpy as np
@@ -29,6 +30,71 @@ COLOR_HUD_CARD = (32, 38, 46)        # Card Background
 COLOR_TEXT_WHITE = (245, 245, 245)
 COLOR_TEXT_MUTED = (160, 175, 190)
 COLOR_ACCENT = (0, 210, 255)         # Bright Gold / Yellow
+
+def calibrate(
+        frame: np.ndarray,
+        camera: str,
+        scale: float,
+):
+    def click_event(event, x, y, flags, param):
+        """Callback function to handle mouse clicks on the video frame."""
+        nonlocal clicked_points, frame_display
+        if event == cv2.EVENT_LBUTTONDOWN:
+            # Save point
+            clicked_points.append([(int) (x/scale), (int) (y/scale)])
+
+            # Draw a visual anchor circle and a label on the frame
+            point_index = len(clicked_points)
+            cv2.circle(frame_display, (x, y), 5, (0, 0, 255), -1)
+            cv2.putText(frame_display, f"P{point_index}: ({x}, {y})", (x + 10, y - 10),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+            cv2.imshow("Select 4 Ground Points", frame_display)
+
+            # Once 4 points are gathered, format and print them
+            if len(clicked_points) == 4:
+                print("\n=== POINTS ===")
+                print("src_pts = np.float32([")
+                for pt in clicked_points:
+                    print(f"    {pt},")
+                print("])")
+                print("==========================================================")
+                print("\nPress ANY KEY to close this window and proceed.")
+
+    clicked_points = []
+    # Duplicate the frame for drawing overlays
+    frame_display = frame.copy()
+
+    # 3. Setup the OpenCV Window and Mouse Callback
+    cv2.namedWindow("Select 4 Ground Points")
+    cv2.setMouseCallback("Select 4 Ground Points", click_event)
+
+    print("INSTRUCTIONS:")
+    print("Click 4 points on the ground plane in a strict CLOCKWISE order:")
+    print("1. Top-Left  ->  2. Top-Right  ->  3. Bottom-Right  ->  4. Bottom-Left")
+    print("Press 'r' to reset points. Press 'q' to quit.")
+
+    # 4. Calibration loop (freezes on this frame until you finish or quit)
+    while True:
+        cv2.imshow("Select 4 Ground Points", frame_display)
+        key = cv2.waitKey(1) & 0xFF
+
+        # Press 'r' to reset choices if you make a mistake
+        if key == ord('r'):
+            frame_display = frame.copy()
+            clicked_points = []
+            print("Points reset. Start over from Top-Left.")
+
+        # Press 'q' to quit early
+        if key == ord('q') or len(clicked_points) == 4:
+            cv2.destroyWindow("Select 4 Ground Points")
+            break
+    #write to config.json file to update saved points
+    with open("config.json", "r") as file:
+        data = json.load(file)
+    data[camera]["points"] = clicked_points
+    with open("config.json", "w") as file:
+        json.dump(data, file, indent=4)
+    return clicked_points
 
 
 def calculate_motion_stats(
@@ -99,6 +165,7 @@ def display_birds_eye(
     src_pts: np.float32 = None,
     warp_background: bool = False
 ) -> np.ndarray:
+
 
     bev_width, bev_height = 400, 600
     dst_pts = np.float32([
@@ -328,7 +395,7 @@ def render_dashboard(
     # 4. Bottom Controls Bar
     ctrl_y = h - 22
     draw_translucent_panel(annotated, 0, h - 28, w, 28, bg_color=COLOR_HUD_BG, alpha=0.75, border_color=(40, 50, 60))
-    controls_text = "[SPACE] Pause/Resume   [H] Toggle HUD   [T] Toggle Trails   [R] Reset Counters   [Q] Quit"
+    controls_text = "[SPACE] Pause/Resume   [H] Toggle HUD   [T] Toggle Trails   [R] Reset Counters   [Q] Quit  [C] Calibrate   [B] Toggle BYV"
     cv2.putText(annotated, controls_text, (14, ctrl_y + 12), cv2.FONT_HERSHEY_SIMPLEX, 0.36, COLOR_TEXT_MUTED, 1, lineType=cv2.LINE_AA)
 
     return annotated
@@ -355,13 +422,14 @@ def main():
     disp_w, disp_h = int(width * display_scale), int(height * display_scale)
 
     # coordinates for birds eye view box of road, TODO move to a new spot later (ie settings.ini)
-    road_coords = np.float32([
-        [128, 138],
-        [231, 134],
-        [318, 173],
-        [149, 212],
-    ])
+    with open("config.json", "r") as file:
+        data = json.load(file)
+    road_coords = np.float32(data[config['gui']['source']]["points"])
+
     road_coords = np.multiply(road_coords, display_scale)
+
+    # whether to show camera or blank canvas for BYV
+    byv_background = False
 
     # Tracking trajectories: {track_id: deque([(x, y), ...])}
     track_history = defaultdict(lambda: deque(maxlen=30))
@@ -473,8 +541,13 @@ def main():
                 show_hud=show_hud,
                 byv_box=road_coords
             )
-
-            byv_frame = display_birds_eye(frame, active_vehicles, road_coords, True)
+            if (len(road_coords) != 4):
+                calibrate(frame, config['gui']['source'], display_scale)
+                with open("config.json", "r") as file:
+                    data = json.load(file)
+                road_coords = np.float32(data[config['gui']['source']]["points"])
+                road_coords = np.multiply(road_coords, display_scale)
+            byv_frame = display_birds_eye(frame, active_vehicles, road_coords, byv_background)
 
             if writer:
                 writer.write(annotated_frame)
@@ -497,6 +570,15 @@ def main():
         elif key == ord("r") or key == ord("R"):
             analytics.reset()
             print("[+] Intersection counters reset.")
+        elif key == ord("c") or key == ord("C"):
+            calibrate(frame, config['gui']['source'], display_scale)
+            with open("config.json", "r") as file:
+                data = json.load(file)
+            road_coords = np.float32(data[config['gui']['source']]["points"])
+            road_coords = np.multiply(road_coords, display_scale)
+        elif key == ord("b") or key == ord("b"):
+            byv_background = not byv_background
+
 
     stream.release()
     if writer:
