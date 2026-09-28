@@ -14,15 +14,15 @@ from ultralytics import YOLO
 
 from cctv_stream import CCTVStream
 
+from calibrate import calibrate
+from calculate_motion_stats import calculate_vehicle_speed
+
 # Target COCO Classes
-# 0: Person (Pedestrian)
 # 2: Car, 3: Motorcycle, 5: Bus, 7: Truck
-PEDESTRIAN_CLASSES = {0: "Pedestrian"}
 VEHICLE_CLASSES = {2: "Car", 3: "Motorcycle", 5: "Bus", 7: "Truck"}
-ALL_TARGET_CLASSES = {**PEDESTRIAN_CLASSES, **VEHICLE_CLASSES}
+ALL_TARGET_CLASSES = { **VEHICLE_CLASSES}
 
 # Visual Color Palette (BGR)
-COLOR_PEDESTRIAN = (255, 200, 0)     # Bright Cyan / Aqua
 COLOR_VEHICLE = (50, 220, 50)        # Vibrant Green
 COLOR_STOPPED = (80, 120, 255)       # Coral / Orange for stationary
 COLOR_HUD_BG = (20, 24, 28)          # Dark Slate Gray
@@ -30,72 +30,6 @@ COLOR_HUD_CARD = (32, 38, 46)        # Card Background
 COLOR_TEXT_WHITE = (245, 245, 245)
 COLOR_TEXT_MUTED = (160, 175, 190)
 COLOR_ACCENT = (0, 210, 255)         # Bright Gold / Yellow
-
-def calibrate(
-        frame: np.ndarray,
-        camera: str,
-        scale: float,
-):
-    def click_event(event, x, y, flags, param):
-        """Callback function to handle mouse clicks on the video frame."""
-        nonlocal clicked_points, frame_display
-        if event == cv2.EVENT_LBUTTONDOWN:
-            # Save point
-            clicked_points.append([(int) (x/scale), (int) (y/scale)])
-
-            # Draw a visual anchor circle and a label on the frame
-            point_index = len(clicked_points)
-            cv2.circle(frame_display, (x, y), 5, (0, 0, 255), -1)
-            cv2.putText(frame_display, f"P{point_index}: ({x}, {y})", (x + 10, y - 10),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
-            cv2.imshow("Select 4 Ground Points", frame_display)
-
-            # Once 4 points are gathered, format and print them
-            if len(clicked_points) == 4:
-                print("\n=== POINTS ===")
-                print("src_pts = np.float32([")
-                for pt in clicked_points:
-                    print(f"    {pt},")
-                print("])")
-                print("==========================================================")
-                print("\nPress ANY KEY to close this window and proceed.")
-
-    clicked_points = []
-    # Duplicate the frame for drawing overlays
-    frame_display = frame.copy()
-
-    # 3. Setup the OpenCV Window and Mouse Callback
-    cv2.namedWindow("Select 4 Ground Points")
-    cv2.setMouseCallback("Select 4 Ground Points", click_event)
-
-    print("INSTRUCTIONS:")
-    print("Click 4 points on the ground plane in a strict CLOCKWISE order:")
-    print("1. Top-Left  ->  2. Top-Right  ->  3. Bottom-Right  ->  4. Bottom-Left")
-    print("Press 'r' to reset points. Press 'q' to quit.")
-
-    # 4. Calibration loop (freezes on this frame until you finish or quit)
-    while True:
-        cv2.imshow("Select 4 Ground Points", frame_display)
-        key = cv2.waitKey(1) & 0xFF
-
-        # Press 'r' to reset choices if you make a mistake
-        if key == ord('r'):
-            frame_display = frame.copy()
-            clicked_points = []
-            print("Points reset. Start over from Top-Left.")
-
-        # Press 'q' to quit early
-        if key == ord('q') or len(clicked_points) == 4:
-            cv2.destroyWindow("Select 4 Ground Points")
-            break
-    #write to config.json file to update saved points
-    with open("config.json", "r") as file:
-        data = json.load(file)
-    data[camera]["points"] = clicked_points
-    with open("config.json", "w") as file:
-        json.dump(data, file, indent=4)
-    return clicked_points
-
 
 def calculate_motion_stats(
     history: deque,
@@ -158,82 +92,20 @@ def draw_translucent_panel(
     if border_color is not None:
         cv2.rectangle(frame, (x1, y1), (x2 - 1, y2 - 1), border_color, 1)
 
-
-def display_birds_eye(
-    frame: np.ndarray,
-    objects: Optional[List[dict]] = None,
-    src_pts: np.float32 = None,
-    warp_background: bool = False
-) -> np.ndarray:
-
-    bev_width, bev_height = 400, 600
-    dst_pts = np.float32([
-        [0, 0],                  # Top-Left
-        [bev_width, 0],          # Top-Right
-        [bev_width, bev_height], # Bottom-Right
-        [0, bev_height]          # Bottom-Left
-    ])
-
-    # Compute perspective transformation matrix
-    matrix = cv2.getPerspectiveTransform(src_pts, dst_pts)
-
-    # Warp the background image for BEV, or create a blank canvas
-    if warp_background:
-        bev_frame = cv2.warpPerspective(frame, matrix, (bev_width, bev_height))
-    else:
-        bev_frame = np.zeros((bev_height, bev_width, 3), dtype=np.uint8)
-        bev_frame[:] = (255, 255, 255)
-
-    if objects:
-        # Extract ground contact points (bottom-center of bounding box)
-        ground_points = []
-        for obj in objects:
-            x1, y1, x2, y2 = map(float, obj["box"])
-            x_center = (x1 + x2) / 2.0
-            y_bottom = y2
-            ground_points.append([x_center, y_bottom])
-
-        # Format points as (N, 1, 2) for OpenCV transformation
-        input_pts = np.array(ground_points, dtype=np.float32).reshape(-1, 1, 2)
-        transformed_pts = cv2.perspectiveTransform(input_pts, matrix).reshape(-1, 2)
-
-        # Iterate directly over paired objects and transformed points
-        for obj, (bev_x, bev_y) in zip(objects, transformed_pts):
-            tid = obj.get("id", "N/A")
-            speed = obj.get("speed")
-            cls_name = obj.get("class")
-            bx, by = int(bev_x), int(bev_y)
-
-            # Draw top-down point on BEV canvas if within bounds
-            if 0 <= bx < bev_width and 0 <= by < bev_height:
-                primary_color = COLOR_STOPPED if speed < 0.6 else COLOR_VEHICLE
-                cv2.circle(bev_frame, (bx, by), 6, primary_color, -1)
-                label_text = f"#{tid} {cls_name} | {speed:.1f} px/f"
-                cv2.putText(
-                    bev_frame, label_text, (bx + 8, by + 4),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0,0,0), 1
-                )
-
-    return bev_frame
-
 class IntersectionAnalytics:
     """Tracks historical metrics, cumulative counts, and intersection statistics."""
 
     def __init__(self):
         self.seen_vehicles = set()
-        self.seen_pedestrians = set()
         self.speed_history = deque(maxlen=60)
         self.fps_history = deque(maxlen=30)
         self.start_time = time.time()
 
-    def update(self, active_vehicles: List[dict], active_pedestrians: List[dict], fps: float):
+    def update(self, active_vehicles: List[dict], fps: float):
         for v in active_vehicles:
             self.seen_vehicles.add(v["id"])
-            if v["speed"] >= 0.6:
+            if v["speed"] != None and v["speed"] >= 0.6:
                 self.speed_history.append(v["speed"])
-
-        for p in active_pedestrians:
-            self.seen_pedestrians.add(p["id"])
 
         if fps > 0:
             self.fps_history.append(fps)
@@ -241,10 +113,6 @@ class IntersectionAnalytics:
     @property
     def total_vehicles(self) -> int:
         return len(self.seen_vehicles)
-
-    @property
-    def total_pedestrians(self) -> int:
-        return len(self.seen_pedestrians)
 
     @property
     def average_vehicle_speed(self) -> float:
@@ -266,7 +134,6 @@ class IntersectionAnalytics:
 
     def reset(self):
         self.seen_vehicles.clear()
-        self.seen_pedestrians.clear()
         self.speed_history.clear()
         self.start_time = time.time()
 
@@ -276,37 +143,32 @@ def render_dashboard(
     stream: CCTVStream,
     analytics: IntersectionAnalytics,
     active_vehicles: List[dict],
-    active_pedestrians: List[dict],
     show_trails: bool = True,
     show_hud: bool = True,
-    byv_box: any = None,
+    bev_box: any = None,
 ) -> np.ndarray:
     """Renders visual overlays, tracking trajectories, and dashboard analytics HUD."""
     annotated = frame.copy()
     h, w = frame.shape[:2]
 
-    byv_pts = byv_box.reshape((-1, 1, 2)).astype(np.int32)
+    bev_pts = bev_box.reshape((-1, 1, 2)).astype(np.int32)
 
     # Draw birds eye view box over main camera
-    cv2.polylines(annotated, [byv_pts], isClosed=True, color=(255, 0, 0), thickness=2)
+    cv2.polylines(annotated, [bev_pts], isClosed=True, color=(255, 0, 0), thickness=2)
 
-    # 1. Render Object Trails and Bounding Boxes
-    all_objects = [("vehicle", v) for v in active_vehicles] + [("pedestrian", p) for p in active_pedestrians]
+    # Render Object Trails and Bounding Boxes
+    all_objects = [("vehicle", v) for v in active_vehicles]
 
     for obj_type, obj in all_objects:
         bx1, by1, bx2, by2 = map(int, obj["box"])
         tid = obj["id"]
         cls_name = obj["class"]
         speed = obj["speed"]
-        heading = obj["heading"]
         history = obj["history"]
         bev_history = obj["bev_history"]
 
         # Determine theme color
-        if obj_type == "pedestrian":
-            primary_color = COLOR_PEDESTRIAN
-        else:
-            primary_color = COLOR_STOPPED if speed < 0.6 else COLOR_VEHICLE
+        primary_color = COLOR_STOPPED if speed != None and speed < 0.6 else COLOR_VEHICLE
 
         # Draw trajectory trail
         if show_trails and len(history) > 1:
@@ -317,7 +179,10 @@ def render_dashboard(
         cv2.rectangle(annotated, (bx1, by1), (bx2, by2), primary_color, 2)
 
         # Draw label tag with background pill (in px/frame)
-        label_text = f"#{tid} {cls_name} | {speed:.1f} px/f {heading}"
+        if speed != None:
+            label_text = f"#{tid} {cls_name} | {speed:.1f} MPH"
+        else:
+            label_text = f"#{tid} {cls_name}"
         font = cv2.FONT_HERSHEY_SIMPLEX
         scale = 0.40
         thickness = 1
@@ -343,7 +208,7 @@ def render_dashboard(
     if not show_hud:
         return annotated
 
-    # 2. Top Header Bar
+    # Top Header Bar
     bar_height = 36
     draw_translucent_panel(annotated, 0, 0, w, bar_height, bg_color=COLOR_HUD_BG, alpha=0.85, border_color=(50, 60, 70))
 
@@ -355,7 +220,7 @@ def render_dashboard(
     cv2.putText(annotated, header_title, (14, 23), cv2.FONT_HERSHEY_SIMPLEX, 0.48, COLOR_TEXT_WHITE, 1, lineType=cv2.LINE_AA)
     cv2.putText(annotated, fps_text, (w - 90, 23), cv2.FONT_HERSHEY_SIMPLEX, 0.48, COLOR_ACCENT, 1, lineType=cv2.LINE_AA)
 
-    # 3. Analytics Widget Panel (Top Right Overlay)
+    # Analytics Widget Panel (Top Right Overlay)
     panel_w = 260
     panel_h = 160
     panel_x = w - panel_w - 14
@@ -381,8 +246,7 @@ def render_dashboard(
 
     metrics = [
         ("Active Vehicles", f"{len(active_vehicles)} (Total: {analytics.total_vehicles})", COLOR_VEHICLE),
-        ("Active Pedestrians", f"{len(active_pedestrians)} (Total: {analytics.total_pedestrians})", COLOR_PEDESTRIAN),
-        ("Avg Vehicle Speed", f"{analytics.average_vehicle_speed:.1f} px/f", COLOR_TEXT_WHITE),
+        ("Avg Vehicle Speed", f"{analytics.average_vehicle_speed:.1f} MPH", COLOR_TEXT_WHITE),
         ("Traffic Density", density_label, density_color),
     ]
 
@@ -395,7 +259,7 @@ def render_dashboard(
     # 4. Bottom Controls Bar
     ctrl_y = h - 22
     draw_translucent_panel(annotated, 0, h - 28, w, 28, bg_color=COLOR_HUD_BG, alpha=0.75, border_color=(40, 50, 60))
-    controls_text = "[SPACE] Pause/Resume   [H] Toggle HUD   [T] Toggle Trails   [R] Reset Counters   [Q] Quit  [C] Calibrate   [B] Toggle BYV"
+    controls_text = "[SPACE] Pause/Resume   [H] Toggle HUD   [T] Toggle Trails   [R] Reset Counters   [Q] Quit  [C] Calibrate   [B] Toggle bev"
     cv2.putText(annotated, controls_text, (14, ctrl_y + 12), cv2.FONT_HERSHEY_SIMPLEX, 0.36, COLOR_TEXT_MUTED, 1, lineType=cv2.LINE_AA)
 
     return annotated
@@ -428,8 +292,8 @@ def main():
 
     road_coords = np.multiply(road_coords, display_scale)
 
-    # whether to show camera or blank canvas for BYV
-    byv_background = False
+    # whether to show camera or blank canvas for BEV
+    bev_background = False
 
     # Tracking trajectories: {track_id: deque([(x, y), ...])}
     track_history = defaultdict(lambda: deque(maxlen=30))
@@ -450,7 +314,7 @@ def main():
     target_class_ids = list(ALL_TARGET_CLASSES.keys())
 
     print(f"[+] Monitoring {stream.display_name} @ {stream.target_fps:.1f} FPS")
-    print("[+] Targets: Cars/Vehicles & Pedestrians (Speed Unit: px/frame)")
+    print("[+] Targets: Cars/Vehicles (Speed Unit: px/frame)")
     print("[+] Controls: 'SPACE' = Pause, 'h' = Toggle HUD, 't' = Toggle Trails, 'r' = Reset, 'q' = Quit\n")
 
     fps_timer = time.time()
@@ -464,9 +328,44 @@ def main():
             if not ret or frame is None:
                 time.sleep(0.01)
                 continue
-
+            # rescale frame
             if display_scale != 1:
                 frame = cv2.resize(frame, (disp_w, disp_h), interpolation=cv2.INTER_LINEAR)
+            # calibrate road coords if needed
+            if (len(road_coords) != 4):
+                calibrate(frame, config['gui']['source'], display_scale)
+                with open("config.json", "r") as file:
+                    data = json.load(file)
+                road_coords = np.float32(data[config['gui']['source']]["points"])
+                road_coords = np.multiply(road_coords, display_scale)
+
+            # src_pts ordered: [Top-Left, Top-Right, Bottom-Right, Bottom-Left]
+            tl, tr, br, bl = road_coords
+
+            # Compute width: maximum distance between top and bottom corner pairs
+            width_top = np.linalg.norm(tr - tl)
+            width_bottom = np.linalg.norm(br - bl)
+            bev_width = int(max(width_top, width_bottom))
+
+            # Compute height: maximum distance between left and right corner pairs
+            height_left = np.linalg.norm(bl - tl)
+            height_right = np.linalg.norm(br - tr)
+            bev_height = int(max(height_left, height_right))
+
+            # Define destination points using computed dimensions
+            dst_pts = np.float32(
+                [[0, 0], [bev_width, 0], [bev_width, bev_height], [0, bev_height]]
+            )
+
+            # Compute perspective transformation matrix
+            matrix = cv2.getPerspectiveTransform(road_coords, dst_pts)
+
+            # Warp the background image for BEV, or create a blank canvas
+            if bev_background:
+                bev_frame = cv2.warpPerspective(frame, matrix, (bev_width, bev_height))
+            else:
+                bev_frame = np.zeros((bev_height, bev_width, 3), dtype=np.uint8)
+                bev_frame[:] = (255, 255, 255)
 
             # YOLO multi-object tracking (ByteTrack)
             results = model.track(
@@ -480,36 +379,7 @@ def main():
             )[0]
 
             active_vehicles = []
-            active_pedestrians = []
             current_active_ids = set()
-
-            if (len(road_coords) != 4):
-                calibrate(frame, config['gui']['source'], display_scale)
-                with open("config.json", "r") as file:
-                    data = json.load(file)
-                road_coords = np.float32(data[config['gui']['source']]["points"])
-                road_coords = np.multiply(road_coords, display_scale)
-            # bev_frame = display_birds_eye(frame, results.boxes, road_coords, byv_background)
-
-            bev_width, bev_height = 400, 600
-            dst_pts = np.float32([
-                [0, 0],  # Top-Left
-                [bev_width, 0],  # Top-Right
-                [bev_width, bev_height],  # Bottom-Right
-                [0, bev_height]  # Bottom-Left
-            ])
-
-            # Compute perspective transformation matrix
-            matrix = cv2.getPerspectiveTransform(road_coords, dst_pts)
-
-            # Warp the background image for BEV, or create a blank canvas
-            if byv_background:
-                bev_frame = cv2.warpPerspective(frame, matrix, (bev_width, bev_height))
-            else:
-                bev_frame = np.zeros((bev_height, bev_width, 3), dtype=np.uint8)
-                bev_frame[:] = (255, 255, 255)
-
-
 
             if results.boxes is not None and results.boxes.id is not None:
                 boxes = results.boxes.xyxy.cpu().numpy()
@@ -520,18 +390,25 @@ def main():
                     cls_id = int(cls_id)
                     current_active_ids.add(track_id)
                     x1, y1, x2, y2 = box
-                    center_pt = ((x1 + x2) / 2.0, (y1 + y2) / 2.0)
-                    track_history[track_id].append(center_pt)
+                    ground_pt = ((x1 + x2) / 2.0, y2)
+                    track_history[track_id].append(ground_pt)
 
-                    # Format points as (N, 1, 2) for OpenCV transformation
-                    input_pts = np.array(center_pt, dtype=np.float32).reshape(-1, 1, 2)
+                    # Format points as (N, 1, 2) for OpenCV transformation, transform points to birds eye view
+                    input_pts = np.array(ground_pt, dtype=np.float32).reshape(-1, 1, 2)
                     transformed_pts = cv2.perspectiveTransform(input_pts, matrix).reshape(-1, 2).astype(int)[0]
-
                     bx, by = transformed_pts
-
                     track_bev_history[track_id].append(transformed_pts)
+
                     # calculate motion statics using birds eye view position
-                    velocity, speed, heading = calculate_motion_stats(track_bev_history[track_id])
+                    # velocity, speed, heading = calculate_motion_stats(track_bev_history[track_id])
+                    velocity, speed = calculate_vehicle_speed(
+                        bev_history=track_bev_history[track_id],
+                        bev_height=bev_height,
+                        bev_width=bev_width,
+                        num_dashes=config.getint("gui", "num_dashes", fallback=2),
+                        num_lanes=config.getint("gui", "num_lanes", fallback=1),
+                        fps=stream.target_fps,
+                    )
 
                     cls_label = ALL_TARGET_CLASSES.get(cls_id, model.names.get(cls_id, "object"))
 
@@ -539,37 +416,28 @@ def main():
                         "id": track_id,
                         "box": box,
                         "class": cls_label,
-                        "center": center_pt,
+                        "center": ground_pt,
                         "velocity": velocity,
                         "speed": speed,
-                        "heading": heading,
                         "history": list(track_history[track_id]),
-                        "bev_history": list(track_history[track_id]),
+                        "bev_history": list(track_bev_history[track_id]),
                     }
 
 
                     # Draw top-down point on BEV canvas if within bounds
                     if 0 <= bx < bev_width and 0 <= by < bev_height:
-                        primary_color = COLOR_STOPPED if speed < 0.6 else COLOR_VEHICLE
+                        primary_color = COLOR_STOPPED if speed != None and speed < 0.6 else COLOR_VEHICLE
                         cv2.circle(bev_frame, (bx, by), 6, primary_color, -1)
-                        label_text = f"#{track_id} {cls_label} | {speed:.1f} px/f"
+                        if speed != None:
+                            label_text = f"#{track_id} {cls_label} | {speed:.1f} MPH"
+                        else:
+                            label_text = f"#{track_id} {cls_label}"
                         cv2.putText(
                             bev_frame, label_text, (bx + 8, by + 4),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 0), 1
                         )
 
-                    if cls_id in PEDESTRIAN_CLASSES:
-                        active_pedestrians.append(obj_data)
-                    else:
-                        active_vehicles.append(obj_data)
-
-                        # Extract ground contact points (bottom-center of bounding box)
-                        ground_points = []
-                    x_center = (x1 + x2) / 2.0
-                    y_bottom = y2
-                    ground_points.append([x_center, y_bottom])
-
-
+                    active_vehicles.append(obj_data)
 
             # Clean up stale track histories not seen for a long time
             for tid in list(track_history.keys()):
@@ -590,7 +458,7 @@ def main():
                 current_fps = 1.0 / (loop_start - fps_timer if fps_timer != loop_start else 0.033)
                 fps_timer = now
 
-            analytics.update(active_vehicles, active_pedestrians, current_fps)
+            analytics.update(active_vehicles, current_fps)
 
 
             # Render Dashboard
@@ -599,10 +467,9 @@ def main():
                 stream=stream,
                 analytics=analytics,
                 active_vehicles=active_vehicles,
-                active_pedestrians=active_pedestrians,
                 show_trails=show_trails,
                 show_hud=show_hud,
-                byv_box=road_coords
+                bev_box=road_coords
             )
 
 
@@ -633,8 +500,8 @@ def main():
                 data = json.load(file)
             road_coords = np.float32(data[config['gui']['source']]["points"])
             road_coords = np.multiply(road_coords, display_scale)
-        elif key == ord("b") or key == ord("b"):
-            byv_background = not byv_background
+        elif key == ord("b") or key == ord("B"):
+            bev_background = not bev_background
 
 
     stream.release()
