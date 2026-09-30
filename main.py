@@ -43,7 +43,6 @@ def calculate_motion_stats(
     """
     if len(history) < 2:
         return (0.0, 0.0), 0.0, "--"
-
     pts = list(history)
     w_pts = pts[-min(len(pts), window):]
     dt = len(w_pts) - 1
@@ -352,7 +351,7 @@ def main():
             height_left = np.linalg.norm(bl - tl)
             height_right = np.linalg.norm(br - tr)
             bev_height = int(max(height_left, height_right))
-            num_lanes = config.getint("gui", "num_lanes", fallback=1)
+            num_lanes = data[config['gui']['source']]["num_lanes"]
 
             # Define destination points using computed dimensions
             dst_pts = np.float32(
@@ -377,8 +376,8 @@ def main():
                     bev_frame,
                     tuple(pt_top),
                     tuple(pt_bottom),
-                    color=(0, 255, 255),
-                    thickness=2,
+                    color=(0, 0, 0),
+                    thickness=1,
                 )
 
             # YOLO multi-object tracking (ByteTrack)
@@ -423,12 +422,8 @@ def main():
                             bev_history=track_bev_history[track_id],
                             bev_height=bev_height,
                             bev_width=bev_width,
-                            num_dashes=config.getint(
-                                "gui", "num_dashes", fallback=4
-                            ),
-                            num_lanes=config.getint(
-                                "gui", "num_lanes", fallback=1
-                            ),
+                            num_dashes=data[config['gui']['source']]["num_dashes"],
+                            num_lanes=data[config['gui']['source']]["num_lanes"],
                             fps=stream.target_fps,
                         )
                         if speed is not None:

@@ -24,29 +24,30 @@ def calibrate(
         for i in range(num_pts - 1):
             pt1 = tuple((clicked_points[i] * scale).astype(int))
             pt2 = tuple((clicked_points[i + 1] * scale).astype(int))
-            cv2.line(frame_display, pt1, pt2, (255, 0, 0), 2, cv2.LINE_AA)
+            cv2.line(frame_display, pt1, pt2, (255, 0, 0), 1, cv2.LINE_AA)
 
         # 2. Close the box if all 4 points are set
         if num_pts == 4:
             pt_first = tuple((clicked_points[0] * scale).astype(int))
             pt_last = tuple((clicked_points[3] * scale).astype(int))
             cv2.line(
-                frame_display, pt_last, pt_first, (255, 0, 0), 2, cv2.LINE_AA
+                frame_display, pt_last, pt_first, (255, 0, 0), 1, cv2.LINE_AA
             )
 
         # 3. Draw circles and text labels for every point
         for i, pt in enumerate(clicked_points):
             px, py = int(pt[0] * scale), int(pt[1] * scale)
-            cv2.circle(frame_display, (px, py), 5, (0, 0, 255), -1)
-            cv2.putText(
-                frame_display,
-                f"P{i + 1}: ({px}, {py})",
-                (px + 10, py - 10),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.5,
-                (0, 255, 0),
-                2,
-            )
+            # cv2.circle(frame_display, (px, py), 5, (0, 0, 255), -1)
+            cv2.drawMarker(frame_display, (px, py), (0, 0, 255), cv2.LINE_AA)
+            # cv2.putText(
+            #     frame_display,
+            #     f"P{i + 1}: ({px}, {py})",
+            #     (px + 10, py - 10),
+            #     cv2.FONT_HERSHEY_SIMPLEX,
+            #     0.5,
+            #     (0, 255, 0),
+            #     2,
+            # )
 
     def click_event(event, x, y, flags, param):
         """Callback function to handle mouse clicks on the video frame."""
