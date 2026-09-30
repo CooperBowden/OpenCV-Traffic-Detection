@@ -297,7 +297,8 @@ def main():
 
     # Tracking trajectories: {track_id: deque([(x, y), ...])}
     track_history = defaultdict(lambda: deque(maxlen=30))
-    track_bev_history = defaultdict(lambda: deque(maxlen=30))
+    track_bev_history = defaultdict(lambda: deque(maxlen=120))
+    vehicle_speeds = {}
     analytics = IntersectionAnalytics()
 
     writer = None
@@ -351,6 +352,7 @@ def main():
             height_left = np.linalg.norm(bl - tl)
             height_right = np.linalg.norm(br - tr)
             bev_height = int(max(height_left, height_right))
+            num_lanes = config.getint("gui", "num_lanes", fallback=1)
 
             # Define destination points using computed dimensions
             dst_pts = np.float32(
@@ -366,6 +368,18 @@ def main():
             else:
                 bev_frame = np.zeros((bev_height, bev_width, 3), dtype=np.uint8)
                 bev_frame[:] = (255, 255, 255)
+            tl, tr, br, bl = dst_pts[0], dst_pts[1], dst_pts[2], dst_pts[3]
+            for i in range(1, num_lanes):
+                t = i / num_lanes
+                pt_top = ((1 - t) * tl + t * tr).astype(int)
+                pt_bottom = ((1 - t) * bl + t * br).astype(int)
+                cv2.line(
+                    bev_frame,
+                    tuple(pt_top),
+                    tuple(pt_bottom),
+                    color=(0, 255, 255),
+                    thickness=2,
+                )
 
             # YOLO multi-object tracking (ByteTrack)
             results = model.track(
@@ -401,14 +415,25 @@ def main():
 
                     # calculate motion statics using birds eye view position
                     # velocity, speed, heading = calculate_motion_stats(track_bev_history[track_id])
-                    velocity, speed = calculate_vehicle_speed(
-                        bev_history=track_bev_history[track_id],
-                        bev_height=bev_height,
-                        bev_width=bev_width,
-                        num_dashes=config.getint("gui", "num_dashes", fallback=2),
-                        num_lanes=config.getint("gui", "num_lanes", fallback=1),
-                        fps=stream.target_fps,
-                    )
+                    if track_id in vehicle_speeds:
+                        speed = vehicle_speeds[track_id]
+                        velocity = (0.0, 0.0)
+                    else:
+                        velocity, speed = calculate_vehicle_speed(
+                            bev_history=track_bev_history[track_id],
+                            bev_height=bev_height,
+                            bev_width=bev_width,
+                            num_dashes=config.getint(
+                                "gui", "num_dashes", fallback=4
+                            ),
+                            num_lanes=config.getint(
+                                "gui", "num_lanes", fallback=1
+                            ),
+                            fps=stream.target_fps,
+                        )
+                        if speed is not None:
+                            print(f"#{track_id} speed: {speed:.2f} MPH")
+                            vehicle_speeds[track_id] = speed
 
                     cls_label = ALL_TARGET_CLASSES.get(cls_id, model.names.get(cls_id, "object"))
 
@@ -450,6 +475,8 @@ def main():
                     track_bev_history[tid].popleft()
                     if len(track_bev_history[tid]) == 0:
                         del track_bev_history[tid]
+                        if tid in vehicle_speeds:
+                            del vehicle_speeds[tid]
 
             # Update FPS calculation
             now = time.time()
@@ -469,7 +496,7 @@ def main():
                 active_vehicles=active_vehicles,
                 show_trails=show_trails,
                 show_hud=show_hud,
-                bev_box=road_coords
+                bev_box=road_coords,
             )
 
 

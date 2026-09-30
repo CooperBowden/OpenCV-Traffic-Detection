@@ -11,23 +11,23 @@
         "url": "https://media-sfs2.vdotcameras.com/rtplive/HamptonRoads819/chunklist_w527335376.m3u8",
         "points": [
             [
-                78,
-                143
+                67,
+                111
             ],
             [
-                144,
-                131
+                113,
+                105
             ],
             [
-                215,
-                193
+                217,
+                194
             ],
             [
-                112,
+                113,
                 225
             ]
         ],
         "num_lanes": 3,
-        "num_dashes": 2
+        "num_dashes": 4
     }
 }
