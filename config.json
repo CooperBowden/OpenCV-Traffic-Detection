@@ -3,31 +3,93 @@
         "name": "US-60 / Warwick Blvd & Hiden Blvd (Newport News, VA)",
         "id": "newportcam028",
         "url": "https://media-sfs2.vdotcameras.com/rtplive/newportcam028/playlist.m3u8",
-        "points": []
+        "points": [],
+        "num_lanes": 2,
+        "num_dashes": 4
     },
     "i64_mm259": {
-        "name": "I-64 EB at MM 259.8",
+        "name": "I-64 EB at MM 259.8 (Hampton Roads)",
         "id": "HamptonRoads819",
         "url": "https://media-sfs2.vdotcameras.com/rtplive/HamptonRoads819/chunklist_w527335376.m3u8",
         "points": [
             [
-                62,
-                147
+                135,
+                148
             ],
             [
-                142,
-                139
+                174,
+                151
             ],
             [
-                226,
-                225
+                151,
+                229
             ],
             [
-                89,
-                239
+                71,
+                215
             ]
         ],
         "num_lanes": 4,
         "num_dashes": 4
+    },
+    "highway.mp4": {
+        "name": "local highway mp4",
+        "url": "datasets/highway.mp4",
+        "points": [
+            [
+                375,
+                520
+            ],
+            [
+                519,
+                558
+            ],
+            [
+                443,
+                688
+            ],
+            [
+                259,
+                598
+            ]
+        ],
+        "num_lanes": 4,
+        "num_dashes": 4,
+        "points_up": [
+            [
+                945,
+                350
+            ],
+            [
+                1274,
+                350
+            ],
+            [
+                1920,
+                824
+            ],
+            [
+                1105,
+                824
+            ]
+        ],
+        "points_down": [
+            [
+                570,
+                331
+            ],
+            [
+                925,
+                331
+            ],
+            [
+                1920,
+                956
+            ],
+            [
+                0,
+                956
+            ]
+        ]
     }
 }

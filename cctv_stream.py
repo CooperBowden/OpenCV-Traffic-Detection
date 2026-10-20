@@ -105,7 +105,7 @@ class CCTVStream:
             self._await_prebuffer()
 
     def _init_capture(self):
-        """Initializes OpenCV VideoCapture with low-delay network flags."""
+        """Initializes OpenCV VideoCapture with validation."""
         if self.is_network_stream:
             os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = (
                 "fflags;nobuffer|flags;low_delay|reorder_queue_size;0"
@@ -113,7 +113,16 @@ class CCTVStream:
             self.cap = cv2.VideoCapture(self.source, cv2.CAP_FFMPEG)
             self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 2)
         else:
+            # Check if local file exists before opening
+            if isinstance(self.source, str) and not os.path.exists(self.source):
+                print(f"[!] Error: Local file '{self.source}' not found at path: {os.path.abspath(self.source)}")
+                self.cap = None
+                return
+
             self.cap = cv2.VideoCapture(self.source)
+
+        if not self.cap or not self.cap.isOpened():
+            print(f"[!] Error: OpenCV failed to open source: {self.source}")
 
     def _await_prebuffer(self):
         """Pre-fills jitter queue to avoid chunk starvation on initial playback."""
@@ -161,12 +170,8 @@ class CCTVStream:
             pass
         self._init_capture()
 
+    # In cctv_stream.py -> read()
     def read(self) -> Tuple[bool, Optional[np.ndarray]]:
-        """
-        Retrieves the next frame.
-        For live network feeds, reads from the smooth jitter queue.
-        For local video files, reads sequentially.
-        """
         if self.is_network_stream:
             try:
                 frame = self.frame_queue.get(timeout=0.25)
@@ -177,7 +182,16 @@ class CCTVStream:
                         return True, self.last_valid_frame.copy()
                 return False, None
         else:
-            return self.cap.read() if self.cap else (False, None)
+            if not self.cap or not self.cap.isOpened():
+                return False, None
+
+            ret, frame = self.cap.read()
+            # Automatically loop local video when reaching End-Of-File (EOF)
+            if not ret:
+                self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                ret, frame = self.cap.read()
+
+            return ret, frame
 
     def get_sleep_interval(self, elapsed_loop_time: float) -> int:
         """

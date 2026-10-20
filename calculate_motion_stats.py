@@ -38,7 +38,7 @@ def calculate_vehicle_speed(
     line_b_y = bev_height * (1.0 - margin_percent)
 
     # Real-world distance covered between the two trap lines (feet)
-    total_feet = num_dashes * 40.0
+    total_feet = num_dashes * 59.0
     trap_distance_ft = total_feet * (1.0 - 2.0 * margin_percent)
 
     # 2. Scan track history for exact sub-frame crossing indices
