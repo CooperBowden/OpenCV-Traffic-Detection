@@ -60,7 +60,7 @@ def draw_translucent_panel(
         cv2.rectangle(frame, (x1, y1), (x2 - 1, y2 - 1), border_color, 1)
 
 
-class IntersectionAnalytics:
+class highway_analytics:
 
     def __init__(self):
         self.seen_vehicles = set()
@@ -112,7 +112,7 @@ class IntersectionAnalytics:
 def render_dashboard(
     frame: np.ndarray,
     stream: CCTVStream,
-    analytics: IntersectionAnalytics,
+    analytics: highway_analytics,
     active_vehicles: List[dict],
     show_trails: bool = True,
     show_hud: bool = True,
@@ -470,7 +470,7 @@ def main():
     track_bev_history_up = defaultdict(lambda: deque(maxlen=120))
     track_bev_history_down = defaultdict(lambda: deque(maxlen=120))
     vehicle_speeds = {}
-    analytics = IntersectionAnalytics()
+    analytics = highway_analytics()
 
     writer = None
     if config["model"]["save"]:
@@ -514,41 +514,33 @@ def main():
                 )
 
             # Perform manual GUI calibration if coordinates are missing
-            if coords_up is None and coords_down is None:
-                calibrate(frame, source_key, display_scale)
+            if not (coords_up is None and coords_down is None):
+                # Setup perspective transforms
                 (
-                    coords_up,
+                    matrix_up,
+                    bev_frame_up,
+                    bev_w_up,
+                    bev_h_up,
+                    src_pts_up,
+                ) = setup_bev_transform(
+                    coords_up, display_scale, frame, bev_background, num_lanes_up
+                )
+                (
+                    matrix_down,
+                    bev_frame_down,
+                    bev_w_down,
+                    bev_h_down,
+                    src_pts_down,
+                ) = setup_bev_transform(
                     coords_down,
-                    num_lanes_up,
+                    display_scale,
+                    frame,
+                    bev_background,
                     num_lanes_down,
-                    distance_up,
-                    distance_down,
-                ) = load_camera_config(source_key)
-
-            # Setup perspective transforms
-            (
-                matrix_up,
-                bev_frame_up,
-                bev_w_up,
-                bev_h_up,
-                src_pts_up,
-            ) = setup_bev_transform(
-                coords_up, display_scale, frame, bev_background, num_lanes_up
-            )
-            (
-                matrix_down,
-                bev_frame_down,
-                bev_w_down,
-                bev_h_down,
-                src_pts_down,
-            ) = setup_bev_transform(
-                coords_down,
-                display_scale,
-                frame,
-                bev_background,
-                num_lanes_down,
-            )
-
+                )
+            else:
+                matrix_down = None
+                matrix_up = None
             # YOLO multi-object tracking (ByteTrack)
             results = model.track(
                 frame,

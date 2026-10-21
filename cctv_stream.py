@@ -21,18 +21,6 @@ import numpy as np
 # Preset Traffic Cameras
 with open("config.json", "r") as file:
     PRESET_CAMERAS = json.load(file)
-# PRESET_CAMERAS = {
-#     "warwick_hiden": {
-#         "name": "US-60 / Warwick Blvd & Hiden Blvd (Newport News, VA)",
-#         "id": "newportcam028",
-#         "url": "https://media-sfs2.vdotcameras.com/rtplive/newportcam028/playlist.m3u8",
-#     },
-#     "i64_mm259": {
-#         "name": "I-64 EB at MM 259.8",
-#         "id": "HamptonRoads819",
-#         "url": "https://media-sfs2.vdotcameras.com/rtplive/HamptonRoads819/chunklist_w527335376.m3u8",
-#     },
-# }
 
 
 class CCTVStream:

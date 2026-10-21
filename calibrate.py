@@ -17,7 +17,7 @@ def update_master_trajectory_store(
         store_file="trajectories_store.npz",
         grid_size=5,  # Bin points into 5x5 pixel spatial cells
         max_pts_per_cell=15,  # Cap points per cell so lanes don't over-fill
-        max_pts=20000  # Master memory cap
+        max_pts=10000  # Master memory cap
 ):
     """
     Updates the master trajectory store without duplicate point dumping.
@@ -330,7 +330,6 @@ def detect_num_lanes(
     pts: np.ndarray,
     num_slices: int = 8,
     prominence_ratio: float = 0.05,
-    min_lane_dist_px: float = 50.0,
 ) -> int:
     """Detects active lane count by running peak detection across multiple thin horizontal
 
@@ -342,20 +341,23 @@ def detect_num_lanes(
     # 1. Focus on the main active Y region (20th to 80th percentile)
     y_vals = pts[:, 1]
     y_min, y_max = np.percentile(y_vals, [20.0, 80.0])
-
+    #account for slope of road
+    m_slope, _ = np.polyfit(pts[:, 1], pts[:, 0], deg=1)
     slice_edges = np.linspace(y_min, y_max, num_slices + 1)
     detected_counts = []
 
     # 2. Process each THIN horizontal slice independently
     for i in range(num_slices):
         y_start, y_end = slice_edges[i], slice_edges[i + 1]
+        y_center = (y_start + y_end) / 2.0
         slice_mask = (y_vals >= y_start) & (y_vals < y_end)
         slice_pts = pts[slice_mask]
 
         if len(slice_pts) < 10:
             continue
 
-        x_coords = slice_pts[:, 0]
+        #account for slope of road
+        x_coords = slice_pts[:, 0] - m_slope * (slice_pts[:, 1] - y_center)
         # Filter extreme horizontal outliers in this slice
         p2, p98 = np.percentile(x_coords, [2.0, 98.0])
         valid_x = x_coords[(x_coords >= p2) & (x_coords <= p98)]
@@ -377,13 +379,14 @@ def detect_num_lanes(
         bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2.0
 
         # Smooth histogram
-        smoothed = gaussian_filter1d(hist.astype(np.float32), sigma=3.0)
-
+        smoothed = gaussian_filter1d(hist.astype(np.float32), 1.0)
+        bin_width = (x_max - x_min) / num_bins
+        distance = max(1, int(40 / bin_width))
         # Detect peaks with lowered prominence (0.05) to capture sparser lanes
         max_density = np.max(smoothed)
         peaks, _ = find_peaks(
             smoothed,
-            distance=min_lane_dist_px,
+            distance=distance,
             prominence=max_density * prominence_ratio,
         )
 
@@ -393,12 +396,15 @@ def detect_num_lanes(
     if not detected_counts:
         return 3
 
-    # Find majojrity number of lanes per slice and take that
+    # Find majority number of lanes per slice and take that
+    avg_lanes = round(sum(detected_counts) / len(detected_counts))
     counts_counter = Counter(detected_counts)
     majority_lanes = counts_counter.most_common(1)[0][0]
+    # Find max lines detected
+    # lanes_count = max(detected_counts)
     print(
         f"num lanes detected per slice: {detected_counts} -> Selected:"
-        f" {majority_lanes} lanes"
+        f" {avg_lanes} lanes"
     )
 
     return max(majority_lanes, 1)

@@ -95,52 +95,154 @@
         "num_dashes": 4,
         "points_up": [
             [
-                989,
-                342
+                969,
+                296
             ],
             [
-                1189,
-                342
+                1121,
+                296
             ],
             [
-                1632,
-                623
+                1335,
+                432
             ],
             [
-                1084,
-                623
+                1014,
+                432
             ]
         ],
         "points_down": [
             [
-                634,
-                344
+                670,
+                315
             ],
             [
-                848,
-                344
+                866,
+                315
             ],
             [
-                801,
-                545
+                837,
+                410
             ],
             [
-                235,
-                545
+                495,
+                410
             ]
         ],
         "lanes_up": 3,
         "down": 3,
         "distance_up": [
             36.0,
-            320.0
+            360.0
         ],
         "lanes_down": 3,
         "distance_down": [
             36.0,
+            200.0
+        ],
+        "num_dashes_up": 9.0,
+        "num_dashes_down": 5.0
+    },
+    "highway2.mp4": {
+        "name": "local highway mp4 2",
+        "url": "datasets/highway2.mp4",
+        "points_up": [
+            [
+                417,
+                350
+            ],
+            [
+                600,
+                350
+            ],
+            [
+                560,
+                534
+            ],
+            [
+                152,
+                534
+            ]
+        ],
+        "lanes_up": 3,
+        "distance_up": [
+            36.0,
+            200.0
+        ],
+        "num_dashes_up": 5.0,
+        "points_down": [
+            [
+                677,
+                362
+            ],
+            [
+                857,
+                362
+            ],
+            [
+                1105,
+                530
+            ],
+            [
+                727,
+                530
+            ]
+        ],
+        "lanes_down": 3,
+        "distance_down": [
+            36.0,
+            200.0
+        ],
+        "num_dashes_down": 5.0
+    },
+    "datasets/highway2.mp4": {
+        "points_up": [
+            [
+                437,
+                339
+            ],
+            [
+                603,
+                339
+            ],
+            [
+                563,
+                504
+            ],
+            [
+                193,
+                504
+            ]
+        ],
+        "lanes_up": 3,
+        "distance_up": [
+            36.0,
             240.0
         ],
-        "num_dashes_up": 8.0,
-        "num_dashes_down": 6.0
+        "num_dashes_up": 6.0,
+        "points_down": [
+            [
+                724,
+                349
+            ],
+            [
+                836,
+                349
+            ],
+            [
+                1000,
+                459
+            ],
+            [
+                792,
+                459
+            ]
+        ],
+        "lanes_down": 2,
+        "distance_down": [
+            24.0,
+            160.0
+        ],
+        "num_dashes_down": 4.0
     }
 }
