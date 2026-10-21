@@ -4,6 +4,7 @@ import os
 import numpy as np
 from scipy.ndimage import gaussian_filter1d
 from scipy.signal import find_peaks
+from scipy.spatial import cKDTree
 
 
 import os
@@ -34,11 +35,11 @@ def update_master_trajectory_store(
 
             # Extract ONLY the newest point (pts[-1]) to prevent quadratic point duplication
             latest_pt = pts[-1]
-
-            if dy > 2.0:
+            min_speed = 30.0
+            if dy > min_speed:
                 # Y increases -> moving DOWN (towards camera)
                 pts_down.append(latest_pt)
-            elif dy < -2.0:
+            elif dy < -min_speed:
                 # Y decreases -> moving UP (towards horizon)
                 pts_up.append(latest_pt)
 
@@ -76,7 +77,7 @@ def update_master_trajectory_store(
 
     # 6. Save updated master lists back to disk
     np.savez(store_file, up=master_up, down=master_down)
-    print(f"[+] Master store updated: {len(master_up)} 'up' / {len(master_down)} 'down' total points.")
+    # print(f"[+] Master store updated: {len(master_up)} 'up' / {len(master_down)} 'down' total points.")
 
 
 def _deduplicate_spatially(pts: np.ndarray, grid_size: int, max_per_cell: int, max_pts: int) -> np.ndarray:
@@ -286,25 +287,289 @@ def calibrate(
             cv2.destroyWindow("Select 4 Ground Points")
             return clicked_points, num_lanes, num_dashes
 
+import numpy as np
+from scipy.ndimage import gaussian_filter1d
+from scipy.signal import find_peaks
 
 
-def auto_calibrate_from_trajectories(
-        store_file="trajectories_store.npz"
+def auto_calibrate(
+    frame: np.ndarray,
+    store_file="trajectories_store.npz"
 ):
     if not os.path.exists(store_file):
         print(f"[!] Store file '{store_file}' not found.")
         return None, None
 
     data = np.load(store_file)
-    master_up = data.get("up", np.empty((0, 2), dtype=np.float32))
-    master_down = data.get("down", np.empty((0, 2), dtype=np.float32))
-
-    coords_up = calculate_bounds(master_up) if len(master_up) > 0 else None
-    coords_down = calculate_bounds(master_down) if len(master_down) > 0 else None
-
-    return coords_up, coords_down
+    up_pts = data.get("up", np.empty((0, 2), dtype=np.float32))
+    down_pts = data.get("down", np.empty((0, 2), dtype=np.float32))
 
 
+
+    filter_up = filter_pts(up_pts)
+    filter_down = filter_pts(down_pts)
+    point_cloud = plot_point_cloud_on_frame(frame=frame.copy(), radius=1, pts_up=filter_up, pts_down=filter_down)
+    cv2.imshow("point cloud", point_cloud)
+    print("filter up points: " + (str) (len(up_pts) - len(filter_up)))
+    print("filter down points: " + (str) (len(down_pts) - len(filter_down)))
+    lines_up, lane_lines_up, num_lanes_up  = plot_lane_peaks(frame=frame, pts=filter_up)
+    lines_down, lane_lines_down, num_lanes_down = plot_lane_peaks(frame=lines_up, pts=filter_down)
+    cv2.imshow("traffic peaks", lines_down)
+    coords_up = calculate_bounds(lane_lines_up)
+    coords_down = calculate_bounds(lane_lines_down)
+
+    return coords_up, coords_down, num_lanes_up, num_lanes_down
+
+def detect_num_lanes(
+    pts: np.ndarray,
+    num_slices: int = 8,
+    prominence_ratio: float = 0.05,
+    min_lane_dist_px: float = 50.0,
+) -> int:
+    """Detects active lane count by running peak detection across multiple thin horizontal
+
+    slices to eliminate perspective slant smearing.
+    """
+    if pts is None or len(pts) < 15:
+        return 3
+
+    # 1. Focus on the main active Y region (20th to 80th percentile)
+    y_vals = pts[:, 1]
+    y_min, y_max = np.percentile(y_vals, [20.0, 80.0])
+
+    slice_edges = np.linspace(y_min, y_max, num_slices + 1)
+    detected_counts = []
+
+    # 2. Process each THIN horizontal slice independently
+    for i in range(num_slices):
+        y_start, y_end = slice_edges[i], slice_edges[i + 1]
+        slice_mask = (y_vals >= y_start) & (y_vals < y_end)
+        slice_pts = pts[slice_mask]
+
+        if len(slice_pts) < 10:
+            continue
+
+        x_coords = slice_pts[:, 0]
+        # Filter extreme horizontal outliers in this slice
+        p2, p98 = np.percentile(x_coords, [2.0, 98.0])
+        valid_x = x_coords[(x_coords >= p2) & (x_coords <= p98)]
+
+        if len(valid_x) < 8:
+            continue
+
+        x_min, x_max = np.min(valid_x), np.max(valid_x)
+        span = int(x_max - x_min)
+
+        if span <= 15:
+            continue
+
+        # 1D histogram within thin slice (minimal Y variation = zero slant blur)
+        num_bins = min(span, 300)
+        hist, bin_edges = np.histogram(
+            valid_x, bins=num_bins, range=(x_min, x_max)
+        )
+        bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2.0
+
+        # Smooth histogram
+        smoothed = gaussian_filter1d(hist.astype(np.float32), sigma=3.0)
+
+        # Detect peaks with lowered prominence (0.05) to capture sparser lanes
+        max_density = np.max(smoothed)
+        peaks, _ = find_peaks(
+            smoothed,
+            distance=min_lane_dist_px,
+            prominence=max_density * prominence_ratio,
+        )
+
+        if len(peaks) > 0:
+            detected_counts.append(len(peaks))
+
+    if not detected_counts:
+        return 3
+
+    # 3. Take the maximum peak count observed across thin slices
+    # (Captures all 3 lanes wherever point density is cleanest)
+    auto_num_lanes = int(np.max(detected_counts))
+    print(
+        f"num lanes detected per slice: {detected_counts} -> Selected:"
+        f" {auto_num_lanes} lanes"
+    )
+
+    return max(auto_num_lanes, 1)
+
+
+def filter_pts(pts, radius=5, min_neighbors=5, factor: float = 1.0):
+    """
+    pts (np.ndarray): Point cloud array of shape (N, 2) where column 0 is X and column 1 is Y.
+    radius (int): Radius of neighboring points.
+    min_neighbors (int): Minimum number of neighboring points.
+    factor (float): IQR multiplier:
+                    - 1.5: Standard Tukey threshold (strips moderate & extreme outliers).
+                    - 2.0 - 2.5: Milder filter (preserves wider lane-changes).
+                    - 1.0: Aggressive filter (tightly keeps core traffic).
+    :return: np.ndarray
+    """
+    tree = cKDTree(pts)
+    # Count neighbors within radius (excluding self)
+    neighbor_counts = tree.query_ball_point(pts, r=radius, return_length=True)
+    mask = (neighbor_counts - 1) >= min_neighbors
+    pts = pts[mask]
+    mask = np.ones(len(pts), dtype=bool)
+
+    # 1. Filter along X-axis (Horizontal off-road / shoulder outliers)
+    q1_x, q3_x = np.percentile(pts[:, 0], [25, 75])
+    iqr_x = q3_x - q1_x
+    lower_x = q1_x - factor * iqr_x
+    upper_x = q3_x + factor * iqr_x
+    mask &= (pts[:, 0] >= lower_x) & (pts[:, 0] <= upper_x)
+
+    # 2. Filter along Y-axis (Vertical far-away / horizon outliers)
+    q1_y, q3_y = np.percentile(pts[:, 1], [25, 75])
+    iqr_y = q3_y - q1_y
+    lower_y = q1_y - factor * iqr_y
+    upper_y = q3_y + factor * iqr_y
+    mask &= (pts[:, 1] >= lower_y) & (pts[:, 1] <= upper_y)
+
+    return pts[mask]
+
+def plot_lane_peaks(
+    frame: np.ndarray,
+    pts: np.ndarray,
+    num_slices: int = 12,
+    line_color: tuple = (0, 255, 255),  # Yellow (BGR)
+    peak_color: tuple = (0, 0, 255),  # Red (BGR)
+    draw_peaks: bool = True,
+) -> tuple[np.ndarray, int]:
+    """Fits perspective centerlines that converge to a shared horizon Vanishing Point
+
+        so lines naturally get closer together near the top of the road.
+        """
+    annotated = frame.copy()
+
+    if pts is None or len(pts) < 20:
+        return annotated, 0
+
+    # 1. Establish perspective Y-range (Top to Bottom)
+    y_min = float(np.percentile(pts[:, 1], 20))  # Top of road (near horizon)
+    y_max = float(np.percentile(pts[:, 1], 80))  # Bottom of road (foreground)
+
+    if y_max <= y_min:
+        return annotated, 0
+
+    # Auto-detect lane count
+    num_lanes = detect_num_lanes(pts)
+    num_lanes = 3
+
+    # 2. Extract slice peaks (red dots) for each lane along Y
+    slice_edges = np.linspace(y_min, y_max, num_slices + 1)
+    lane_samples = [[] for _ in range(num_lanes)]  # lane_samples[i] holds red dots for Lane i
+
+    for k in range(num_slices):
+        y_start, y_end = slice_edges[k], slice_edges[k + 1]
+        y_center = (y_start + y_end) / 2.0
+
+        slice_pts = pts[(pts[:, 1] >= y_start) & (pts[:, 1] < y_end)]
+        if len(slice_pts) < 5:
+            continue
+
+        x_coords = slice_pts[:, 0]
+        p2, p98 = np.percentile(x_coords, [2.0, 98.0])
+        valid_x = x_coords[(x_coords >= p2) & (x_coords <= p98)]
+
+        if len(valid_x) < 5:
+            continue
+
+        x_min, x_max = np.min(valid_x), np.max(valid_x)
+        span = int(x_max - x_min)
+        if span <= 5:
+            continue
+
+        num_bins = min(span, 250)
+        hist, bin_edges = np.histogram(
+            valid_x, bins=num_bins, range=(x_min, x_max)
+        )
+        bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2.0
+        smoothed = gaussian_filter1d(hist.astype(np.float32), sigma=3.0)
+
+        # Dynamic peak distance scaling by depth
+        y_depth_ratio = (y_center - y_min) / max(y_max - y_min, 1.0)
+        min_peak_dist = max(
+            (num_bins / (num_lanes * 2.5)) * (0.3 + 0.7 * y_depth_ratio), 3.0
+        )
+
+        peaks, props = find_peaks(
+            smoothed,
+            distance=min_peak_dist,
+            prominence=np.max(smoothed) * 0.05,
+        )
+
+        if len(peaks) >= num_lanes:
+            top_idxs = np.argsort(props["prominences"])[-num_lanes:]
+            extracted_peaks = sorted(bin_centers[peaks[top_idxs]])
+        else:
+            p_low, p_high = np.percentile(valid_x, [10, 90])
+            extracted_peaks = np.linspace(p_low, p_high, num_lanes)
+
+        # Assign peaks from left to right: Lane 0 (left), Lane 1 (mid), Lane 2 (right)
+        for lane_idx in range(num_lanes):
+            lane_samples[lane_idx].append(
+                (float(extracted_peaks[lane_idx]), float(y_center))
+            )
+    lane_lines = []
+    # 3. Fit Linear Regression (X = m*Y + b) per lane through its red dots
+    for lane_idx, samples in enumerate(lane_samples):
+        if len(samples) < 2:
+            continue
+
+        samples_arr = np.array(samples)
+        x_s = samples_arr[:, 0]  # X coordinates of red dots for this lane
+        y_s = samples_arr[:, 1]  # Y coordinates of red dots for this lane
+
+        # Ordinary Least Squares linear fit: X = m * Y + b
+        m, b = np.polyfit(y_s, x_s, deg=1)
+
+        # Calculate line endpoints at top (y_min) and bottom (y_max)
+        x_top = int(m * y_min + b)
+        x_bottom = int(m * y_max + b)
+
+        pt_top = (x_top, int(y_min))
+        pt_bottom = (x_bottom, int(y_max))
+        lane_lines.append((pt_top, pt_bottom))
+
+        # Draw average line down the center of this lane's red dots
+        cv2.line(
+            annotated,
+            pt_top,
+            pt_bottom,
+            color=line_color,
+            thickness=3,
+            lineType=cv2.LINE_AA,
+        )
+
+        # Optionally draw the red slice peak dots
+        if draw_peaks:
+            for sx, sy in samples:
+                cv2.circle(
+                    annotated,
+                    (int(sx), int(sy)),
+                    radius=4,
+                    color=peak_color,
+                    thickness=-1,
+                )
+
+        # Label each lane at the bottom
+        cv2.putText(
+            annotated,
+            f"Lane {lane_idx + 1}",
+            (pt_bottom[0] - 25, pt_bottom[1] + 25),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.55,
+            (255, 255, 255),
+            2,
+            cv2.LINE_AA,
+        )
+
+    return annotated, lane_lines, num_lanes
 
 def extract_lane_boundaries_from_band(
     band_pts, num_lanes=3, x_min_clip=0, x_max_clip=1920
@@ -387,40 +652,91 @@ def extract_lane_boundaries_from_band(
     return boundaries
 
 
-def calculate_bounds(pts, num_lanes=3):
-    """Constructs road trapezoid bounds using outlier-filtered band analysis."""
-    if pts is None or len(pts) == 0:
-        return None
+def calculate_bounds(
+    drawn_lines: list, padding_factor: float = 1.0
+) -> np.ndarray:
+    """Creates a 4-corner perspective road bounding box directly from drawn line endpoints.
 
-    # 1. Establish Y bands (Horizon vs Camera foreground)
-    y_min = np.percentile(pts[:, 1], 35)
-    y_max = np.percentile(pts[:, 1], 95)
+    Parameters:
+        drawn_lines (list): List of line tuples [((x_top1, y_top1), (x_bot1,
+          y_bot1)), ...]
+        padding_factor (float): Outward padding multiplier (1.0 = 0.5 * lane_width per side).
 
-    band_h = max((y_max - y_min) * 0.15, 10.0)
-    top_band = pts[np.abs(pts[:, 1] - y_min) < band_h]
-    bottom_band = pts[np.abs(pts[:, 1] - y_max) < band_h]
+    Returns:
+        np.ndarray: 4-point trapezoid array [[TL], [TR], [BR], [BL]]
+    """
+    if not drawn_lines:
+        return np.empty((0, 2), dtype=np.int32)
+    print(drawn_lines)
+    # 1. Collect top and bottom X-coordinates across all drawn lines
+    tops = []
+    bottoms = []
 
-    if len(top_band) == 0 or len(bottom_band) == 0:
-        return None
+    for pt_top, pt_bottom in drawn_lines:
+        tops.append((pt_top[0], pt_top[1]))
+        bottoms.append((pt_bottom[0], pt_bottom[1]))
 
-    # 2. Extract X boundaries at top and bottom heights
-    top_bounds = extract_lane_boundaries_from_band(top_band, num_lanes=num_lanes)
-    bottom_bounds = extract_lane_boundaries_from_band(
-        bottom_band, num_lanes=num_lanes
-    )
+    # Sort lines from left to right based on bottom X-coordinate
+    tops.sort(key=lambda p: p[0])
+    bottoms.sort(key=lambda p: p[0])
 
-    if top_bounds is None or bottom_bounds is None:
-        return None
+    y_min = tops[0][1]  # Horizon Y
+    y_max = bottoms[0][1]  # Foreground Y
 
-    # 3. Assemble overall road trapezoid [TL, TR, BR, BL]
-    master_road_coords = np.array(
+    num_lanes = len(drawn_lines)
+
+    # 2. Extract furthest-left and furthest-right centerline X positions
+    x_left_top = tops[0][0]
+    x_right_top = tops[-1][0]
+
+    x_left_bot = bottoms[0][0]
+    x_right_bot = bottoms[-1][0]
+
+    # 3. Calculate average lane spacing at top and bottom
+    if num_lanes > 1:
+        w_top = (x_right_top - x_left_top) / (num_lanes - 1)
+        w_bot = (x_right_bot - x_left_bot) / (num_lanes - 1)
+    else:
+        w_top, w_bot = 80.0, 200.0  # Default fallbacks for single-lane
+
+    # 4. Compute outer half-lane padding (0.5 * lane_width)
+    half_top = (w_top / 2.0) * padding_factor
+    half_bot = (w_bot / 2.0) * padding_factor
+
+    # 5. Build 4-corner perspective road bounding box
+    bbox = np.array(
         [
-            [top_bounds[0], int(y_min)],  # Top-Left
-            [top_bounds[-1], int(y_min)],  # Top-Right
-            [bottom_bounds[-1], int(y_max)],  # Bottom-Right
-            [bottom_bounds[0], int(y_max)],  # Bottom-Left
+            [int(x_left_top - half_top), int(y_min)],  # Top-Left (TL)
+            [int(x_right_top + half_top), int(y_min)],  # Top-Right (TR)
+            [int(x_right_bot + half_bot), int(y_max)],  # Bottom-Right (BR)
+            [int(x_left_bot - half_bot), int(y_max)],  # Bottom-Left (BL)
         ],
         dtype=np.int32,
     )
 
-    return master_road_coords
+    return bbox
+
+def plot_point_cloud_on_frame(
+    frame: np.ndarray,
+    pts_up: np.ndarray = None,
+    pts_down: np.ndarray = None,
+    radius: int = 2,
+):
+    """Overlays directional point clouds onto an OpenCV video frame.
+
+    - Upstream traffic (pts_up): Blue
+    - Downstream traffic (pts_down): Orange
+    """
+    canvas = frame.copy()
+
+    # Draw 'up' trajectory points (Blue)
+    if pts_up is not None and len(pts_up) > 0:
+        for x, y in pts_up.astype(int):
+            cv2.circle(canvas, (x, y), radius, (255, 100, 0), -1)
+
+    # Draw 'down' trajectory points (Orange)
+    if pts_down is not None and len(pts_down) > 0:
+        for x, y in pts_down.astype(int):
+            cv2.circle(canvas, (x, y), radius, (0, 165, 255), -1)
+
+    return canvas

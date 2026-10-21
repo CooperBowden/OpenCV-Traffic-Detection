@@ -13,7 +13,7 @@ from ultralytics import YOLO
 
 from calculate_motion_stats import calculate_vehicle_speed
 from calibrate import (
-    auto_calibrate_from_trajectories,
+    auto_calibrate,
     calibrate,
     update_master_trajectory_store,
 )
@@ -536,7 +536,8 @@ def main():
                     else None
                 )
 
-            num_lanes = cam_data.get("num_lanes", 3)
+            num_lanes_up = cam_data.get("num_lanes_up", 3)
+            num_lanes_down = cam_data.get("num_lanes_down", 3)
             num_dashes = cam_data.get("num_dashes", 4)
 
             # Setup dual perspective transforms for both directional lanes
@@ -547,7 +548,7 @@ def main():
                 bev_h_up,
                 src_pts_up,
             ) = setup_bev_transform(
-                coords_up, display_scale, frame, bev_background, num_lanes
+                coords_up, display_scale, frame, bev_background, num_lanes_up
             )
             (
                 matrix_down,
@@ -556,7 +557,7 @@ def main():
                 bev_h_down,
                 src_pts_down,
             ) = setup_bev_transform(
-                coords_down, display_scale, frame, bev_background, num_lanes
+                coords_down, display_scale, frame, bev_background, num_lanes_down
             )
 
             # YOLO multi-object tracking (ByteTrack)
@@ -640,7 +641,7 @@ def main():
                             bev_height=active_h,
                             bev_width=active_w,
                             num_dashes=num_dashes,
-                            num_lanes=num_lanes,
+                            num_lanes=num_lanes_up,
                             fps=stream.target_fps,
                         )
                         if speed is not None:
@@ -801,7 +802,7 @@ def main():
             print("[+] Intersection counters reset.")
         elif key == ord("c") or key == ord("C"):
             # Auto-calibrate dual trapezoids from master point cloud store
-            coords_up, coords_down = auto_calibrate_from_trajectories()
+            coords_up, coords_down, num_lanes_up, num_lanes_down = auto_calibrate(frame=frame)
             with open("config.json", "r") as file:
                 data = json.load(file)
 
@@ -810,8 +811,10 @@ def main():
 
             if coords_up is not None:
                 data[source_key]["points_up"] = coords_up.tolist()
+                data[source_key]["lanes_up"] = num_lanes_up
             if coords_down is not None:
                 data[source_key]["points_down"] = coords_down.tolist()
+                data[source_key]["down"] = num_lanes_down
 
             with open("config.json", "w") as file:
                 json.dump(data, file, indent=4)
