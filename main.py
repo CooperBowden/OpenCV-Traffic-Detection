@@ -346,7 +346,7 @@ def setup_bev_transform(
     road_coords: Optional[np.ndarray],
     display_scale: float,
     frame: np.ndarray,
-    bev_background: bool = False,
+    bev_background: bool = True,
     num_lanes: int = 3,
 ):
     if road_coords is None or len(road_coords) != 4:
@@ -464,7 +464,7 @@ def main():
         distance_down,
     ) = load_camera_config(source_key)
 
-    bev_background = False
+    bev_background = True
 
     track_history = defaultdict(lambda: deque(maxlen=120))
     track_bev_history_up = defaultdict(lambda: deque(maxlen=120))

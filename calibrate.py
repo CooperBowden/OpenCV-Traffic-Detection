@@ -5,6 +5,7 @@ import numpy as np
 from scipy.ndimage import gaussian_filter1d
 from scipy.signal import find_peaks
 from scipy.spatial import cKDTree
+from collections import Counter
 
 
 import os
@@ -392,15 +393,15 @@ def detect_num_lanes(
     if not detected_counts:
         return 3
 
-    # 3. Take the maximum peak count observed across thin slices
-    # (Captures all 3 lanes wherever point density is cleanest)
-    auto_num_lanes = int(np.max(detected_counts))
+    # Find majojrity number of lanes per slice and take that
+    counts_counter = Counter(detected_counts)
+    majority_lanes = counts_counter.most_common(1)[0][0]
     print(
         f"num lanes detected per slice: {detected_counts} -> Selected:"
-        f" {auto_num_lanes} lanes"
+        f" {majority_lanes} lanes"
     )
 
-    return max(auto_num_lanes, 1)
+    return max(majority_lanes, 1)
 
 
 def filter_pts(pts, radius=5, min_neighbors=5, factor: float = 1.0):
@@ -463,7 +464,6 @@ def plot_lane_peaks(
 
     # Auto-detect lane count
     num_lanes = detect_num_lanes(pts)
-    num_lanes = 3
 
     # 2. Extract slice peaks (red dots) for each lane along Y
     slice_edges = np.linspace(y_min, y_max, num_slices + 1)
@@ -812,7 +812,6 @@ def detect_num_dashes(
         # Slice narrow vertical strip along the divider
         strip = gray[:, x_start:x_end]
         y_profile = np.mean(strip, axis=1)
-        cv2.imshow("strip " + str(div_x), strip)
 
         # Light smoothing (sigma=2.0) to preserve small horizon dashes
         smoothed = gaussian_filter1d(y_profile.astype(np.float32), sigma=2.0)
