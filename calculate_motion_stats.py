@@ -9,7 +9,7 @@ def calculate_vehicle_speed(
     num_lanes: int = 1,
     fps: float = 30.0,
     margin_percent: float = 0.05,
-) -> tuple[tuple[float, float], float, str]:
+) -> tuple[tuple[float, float], float]:
     """Calculates real vehicle speed (MPH), velocity vector, and cardinal heading
 
     using sub-frame virtual speed trap interpolation across user-drawn BEV bounds.
@@ -26,7 +26,6 @@ def calculate_vehicle_speed(
     Returns:
     - (vx_mph, vy_mph): Velocity vector components in MPH.
     - speed_mph: Vehicle speed in MPH.
-    - heading: Cardinal direction string (e.g., 'N', 'S', 'SE').
     """
     if len(bev_history) < 2 or fps <= 0 or bev_height <= 0:
         return (0.0, 0.0), None

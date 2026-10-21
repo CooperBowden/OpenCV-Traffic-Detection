@@ -9,9 +9,6 @@ from scipy.signal import find_peaks
 import os
 import numpy as np
 
-import os
-import numpy as np
-
 
 def update_master_trajectory_store(
         track_history,

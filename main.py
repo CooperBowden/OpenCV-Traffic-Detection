@@ -617,10 +617,13 @@ def main():
                         velocity = (0.0, 0.0)
                     else:
                         active_bev_hist = (
-                            track_bev_history_up[track_id]
+                            track_bev_history_up.get(track_id)
                             if 0 <= bx_up < bev_w_up and 0 <= by_up < bev_h_up
-                            else track_bev_history_down[track_id]
+                            else track_bev_history_down.get(track_id)
                         )
+                        if active_bev_hist is None:
+                            active_bev_hist = []
+
                         active_h = (
                             bev_h_up
                             if 0 <= bx_up < bev_w_up and 0 <= by_up < bev_h_up
@@ -734,8 +737,16 @@ def main():
                         track_bev_history_down[tid].popleft()
                     if len(track_bev_history_down[tid]) == 0:
                         del track_bev_history_down[tid]
-                        if tid in vehicle_speeds:
-                            del vehicle_speeds[tid]
+
+            for tid in list(track_bev_history_up.keys()):
+                if tid not in current_active_ids:
+                    if len(track_bev_history_up[tid]) > 0:
+                        track_bev_history_up[tid].popleft()
+                    if len(track_bev_history_up[tid]) == 0:
+                        del track_bev_history_up[tid]
+            for tid in list(vehicle_speeds.keys()):
+                if tid not in current_active_ids:
+                    del vehicle_speeds[tid]
 
             update_master_trajectory_store(track_history)
 
