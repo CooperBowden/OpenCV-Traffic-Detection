@@ -530,12 +530,21 @@ def plot_lane_peaks(
         x_s = samples_arr[:, 0]  # X coordinates of red dots for this lane
         y_s = samples_arr[:, 1]  # Y coordinates of red dots for this lane
 
-        # Ordinary Least Squares linear fit: X = m * Y + b
-        m, b = np.polyfit(y_s, x_s, deg=1)
+        #estimate line position through avg x position in each slice
+        line = cv2.fitLine(
+            points=np.array(samples, dtype=np.float32),
+            distType=cv2.DIST_HUBER,
+            param=0,
+            reps=0.01,
+            aeps=0.01,
+        )
+        #extract to 1d list
+        vx, vy, x0, y0 = line.ravel().tolist()
 
-        # Calculate line endpoints at top (y_min) and bottom (y_max)
-        x_top = int(m * y_min + b)
-        x_bottom = int(m * y_max + b)
+        # Line equation: X = x0 + (vx/vy)*(Y - y0)
+        slope_x = vx / vy
+        x_top = int(x0 + slope_x * (y_min - y0))
+        x_bottom = int(x0 + slope_x * (y_max - y0))
 
         pt_top = (x_top, int(y_min))
         pt_bottom = (x_bottom, int(y_max))
