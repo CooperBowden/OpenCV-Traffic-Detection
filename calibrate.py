@@ -16,7 +16,7 @@ def update_master_trajectory_store(
         store_file="trajectories_store.npz",
         grid_size=5,  # Bin points into 5x5 pixel spatial cells
         max_pts_per_cell=15,  # Cap points per cell so lanes don't over-fill
-        max_pts=10000  # Master memory cap
+        max_pts=20000  # Master memory cap
 ):
     """
     Updates the master trajectory store without duplicate point dumping.
@@ -294,6 +294,8 @@ from scipy.signal import find_peaks
 
 def auto_calibrate(
     frame: np.ndarray,
+    bev_frame_up: np.ndarray,
+    bev_frame_down: np.ndarray,
     store_file="trajectories_store.npz"
 ):
     if not os.path.exists(store_file):
@@ -314,11 +316,14 @@ def auto_calibrate(
     print("filter down points: " + (str) (len(down_pts) - len(filter_down)))
     lines_up, lane_lines_up, num_lanes_up  = plot_lane_peaks(frame=frame, pts=filter_up)
     lines_down, lane_lines_down, num_lanes_down = plot_lane_peaks(frame=lines_up, pts=filter_down)
+    num_dashes_up = detect_num_dashes(bev_frame_up, num_lanes_up)
+    num_dashes_down = detect_num_dashes(bev_frame_down, num_lanes_down)
     cv2.imshow("traffic peaks", lines_down)
     coords_up = calculate_bounds(lane_lines_up)
     coords_down = calculate_bounds(lane_lines_down)
-
-    return coords_up, coords_down, num_lanes_up, num_lanes_down
+    distance_up = find_real_world_distance(coords_up, num_lanes_up, num_dashes_up)
+    distance_down = find_real_world_distance(coords_down, num_lanes_down, num_dashes_down)
+    return coords_up, coords_down, num_lanes_up, num_lanes_down, distance_up, distance_down, num_dashes_up, num_dashes_down
 
 def detect_num_lanes(
     pts: np.ndarray,
@@ -667,7 +672,6 @@ def calculate_bounds(
     """
     if not drawn_lines:
         return np.empty((0, 2), dtype=np.int32)
-    print(drawn_lines)
     # 1. Collect top and bottom X-coordinates across all drawn lines
     tops = []
     bottoms = []
@@ -715,6 +719,127 @@ def calculate_bounds(
     )
 
     return bbox
+
+from typing import Tuple
+import numpy as np
+
+
+def find_real_world_distance(
+    bounds: np.ndarray,
+    num_lanes: int = 3,
+    num_dashes: float = 3.0,
+    lane_width: float = 12.0,  # Standard US highway lane width = 12.0 ft (3.65m)
+    dash_length: float = 40.0,  # Standard MUTCD dash + gap cycle = 40.0 ft (12.2m)
+) -> Tuple[float, float]:
+    """Calculates real-world (width, length) of a road box using the number of
+
+    lanes and number of dash-gap cycles (with geometric BEV fallback).
+
+    Parameters:
+        bounds (np.ndarray, optional): 4-point ground trapezoid [[TL], [TR],
+          [BR], [BL]]
+        num_lanes (int): Number of active driving lanes
+        num_dashes (float): Number of 40-foot dash-gap cycles spanning the
+          box[cite: 1]
+        lane_width (float): Physical lane width in feet (default: 12.0 ft)[cite: 1]
+        dash_length (float): Physical dash-gap cycle length in feet (default:
+          40.0 ft)[cite: 1]
+
+    Returns:
+        Tuple[float, float]: (real_width, real_length) in feet
+    """
+    # 1. Total real-world physical width across active lanes[cite: 1]
+    real_width = float(num_lanes * lane_width)
+
+    # 2. Total real-world physical length across dash-gap cycles[cite: 1]
+    if num_dashes is not None and num_dashes > 0:
+        real_length = float(num_dashes * dash_length)
+    elif bounds is not None and len(bounds) == 4:
+        # Fallback to Isotropic BEV pixel scale if num_dashes is missing or 0
+        tl, tr, br, bl = np.float32(bounds)
+
+        width_top = np.linalg.norm(tr - tl)
+        width_bottom = np.linalg.norm(br - bl)
+        bev_width_px = max(width_top, width_bottom)
+
+        height_left = np.linalg.norm(bl - tl)
+        height_right = np.linalg.norm(br - tr)
+        bev_height_px = max(height_left, height_right)
+
+        if bev_width_px > 0:
+            scale_x = real_width / bev_width_px
+            real_length = float(bev_height_px * scale_x)
+        else:
+            real_length = 0.0
+    else:
+        real_length = 0.0
+
+    print(f"length: {real_length:.2f} ft, width: {real_width:.2f} ft")
+
+    return (round(real_width, 2), round(real_length, 2))
+
+def detect_num_dashes(
+    bev_frame: np.ndarray, num_lanes: int = 3
+) -> float:
+    """Accurately counts painted dashes in BEV space by sampling narrow vertical
+
+    strips along lane divider lines rather than averaging the full image width.
+    """
+    if bev_frame is None or bev_frame.size == 0:
+        return 3.0
+
+    gray = cv2.cvtColor(bev_frame, cv2.COLOR_BGR2GRAY)
+    h, w = gray.shape
+
+    # 1. Locate lane divider X positions (valleys between lane centers)
+    divider_x_positions = []
+    lane_width_px = w / float(num_lanes)
+    for i in range(1, num_lanes):
+        divider_x_positions.append(int(i * lane_width_px))
+
+    if not divider_x_positions:
+        divider_x_positions = [int(w / 2.0)]
+
+    all_lane_dashes = []
+
+    # 2. Extract narrow 10-pixel vertical strip around each divider line
+    strip_w = 50
+
+    for div_x in divider_x_positions:
+        x_start = max(0, div_x - strip_w)
+        x_end = min(w, div_x + strip_w)
+
+        # Slice narrow vertical strip along the divider
+        strip = gray[:, x_start:x_end]
+        y_profile = np.mean(strip, axis=1)
+        cv2.imshow("strip " + str(div_x), strip)
+
+        # Light smoothing (sigma=2.0) to preserve small horizon dashes
+        smoothed = gaussian_filter1d(y_profile.astype(np.float32), sigma=2.0)
+
+        # Dynamic sensitivity: set min prominence to 3% of max intensity span
+        min_prominence = max((np.max(smoothed) - np.min(smoothed)) * 0.04, 3.0)
+
+        # Minimum distance between 40ft dash cycles in BEV space
+        min_dash_dist_px = max(5.0, h / 20.0)
+
+        peaks, _ = find_peaks(
+            smoothed, distance=min_dash_dist_px, prominence=min_prominence
+        )
+
+        if len(peaks) > 0:
+            all_lane_dashes.append(len(peaks))
+    print(all_lane_dashes)
+    # Return the maximum detected dash count across all divider lines
+    detected_dashes = max(all_lane_dashes) if all_lane_dashes else 0
+
+    # If faint/faded lines yield less than 1, fall back to geometric aspect estimation
+    if detected_dashes < 1:
+        aspect_ratio = float(h) / float(w)
+        estimated_dashes = (num_lanes * 12.0 * aspect_ratio) / 40.0
+        return round(float(estimated_dashes), 2)
+
+    return float(detected_dashes)
 
 def plot_point_cloud_on_frame(
     frame: np.ndarray,

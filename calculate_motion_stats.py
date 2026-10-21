@@ -4,9 +4,9 @@ import numpy as np
 def calculate_vehicle_speed(
     bev_history: list,
     bev_height: int,
-    bev_width: int,
-    num_dashes: int = 2,
-    num_lanes: int = 1,
+    length: int,
+    width: int,
+    direction: str,
     fps: float = 30.0,
     margin_percent: float = 0.05,
 ) -> tuple[tuple[float, float], float]:
@@ -17,9 +17,7 @@ def calculate_vehicle_speed(
     Parameters:
     - bev_history: List/deque of tracked (x, y) coordinates in BEV space.
     - bev_height: Height of the BEV frame canvas (pixels).
-    - bev_width: Width of the BEV frame canvas (pixels).
-    - num_dashes: Number of dash-gap cycles spanning the drawn area (40 ft per cycle).
-    - num_lanes: Number of lanes spanning the drawn area (12 ft per lane).
+    - length: box length in feet
     - fps: Target video frame rate.
     - margin_percent: Inset safety margin from top/bottom drawn edges (default 0.05 = 5%).
 
@@ -31,14 +29,17 @@ def calculate_vehicle_speed(
         return (0.0, 0.0), None
 
     pts = list(bev_history)
-
-    # 1. Define Trap Line Y-coordinates (5% insets from drawn box boundaries)
-    line_a_y = bev_height * margin_percent
-    line_b_y = bev_height * (1.0 - margin_percent)
+    if (direction == "down"):
+        # 1. Define Trap Line Y-coordinates (5% insets from drawn box boundaries)
+        line_a_y = bev_height * margin_percent
+        line_b_y = bev_height * (1.0 - margin_percent)
+    else:
+        # 1. Define Trap Line Y-coordinates (5% insets from drawn box boundaries)
+        line_a_y = bev_height * (1.0 - margin_percent)
+        line_b_y = bev_height * margin_percent
 
     # Real-world distance covered between the two trap lines (feet)
-    total_feet = num_dashes * 59.0
-    trap_distance_ft = total_feet * (1.0 - 2.0 * margin_percent)
+    trap_distance_ft = length * (1.0 - 2.0 * margin_percent)
 
     # 2. Scan track history for exact sub-frame crossing indices
     y_prev_step = pts[-2][1]
@@ -104,6 +105,7 @@ def calculate_real_time_speed(
     history: list,
     scale_x: float,  # feet per pixel (X axis)
     scale_y: float,  # feet per pixel (Y axis)
+    direction: str,
     fps: float,
     window: int = 5,
 ) -> tuple[tuple[float, float], float, str]:

@@ -20,49 +20,19 @@ from calibrate import (
 from cctv_stream import CCTVStream
 
 # Target COCO Classes
-# 2: Car, 3: Motorcycle, 5: Bus, 7: Truck
 VEHICLE_CLASSES = {2: "Car", 3: "Motorcycle", 5: "Bus", 7: "Truck"}
 ALL_TARGET_CLASSES = {**VEHICLE_CLASSES}
 
 # Visual Color Palette (BGR)
-COLOR_VEHICLE = (50, 220, 50)  # Vibrant Green
-COLOR_STOPPED = (80, 120, 255)  # Coral / Orange for stationary
-COLOR_HUD_BG = (20, 24, 28)  # Dark Slate Gray
-COLOR_HUD_CARD = (32, 38, 46)  # Card Background
+COLOR_VEHICLE = (50, 220, 50)
+COLOR_STOPPED = (80, 120, 255)
+COLOR_HUD_BG = (20, 24, 28)
+COLOR_HUD_CARD = (32, 38, 46)
 COLOR_TEXT_WHITE = (245, 245, 245)
 COLOR_TEXT_MUTED = (160, 175, 190)
-COLOR_ACCENT = (0, 210, 255)  # Bright Gold / Yellow
-COLOR_BEV_UP = (255, 0, 0)  # Blue for Upstream Box
-COLOR_BEV_DOWN = (0, 165, 255)  # Orange for Downstream Box
-
-
-def calculate_motion_stats(
-    history: deque,
-    window: int = 5,
-) -> Tuple[Tuple[float, float], float, str]:
-    """Computes velocity vector (px/f), speed magnitude, and cardinal heading direction."""
-    if len(history) < 2:
-        return (0.0, 0.0), 0.0, "--"
-    pts = list(history)
-    w_pts = pts[-min(len(pts), window) :]
-    dt = len(w_pts) - 1
-
-    if dt == 0:
-        return (0.0, 0.0), 0.0, "--"
-
-    vx = (w_pts[-1][0] - w_pts[0][0]) / dt
-    vy = (w_pts[-1][1] - w_pts[0][1]) / dt
-    speed = float(np.hypot(vx, vy))
-
-    if speed < 0.6:
-        return (vx, vy), speed, "Stopped"
-
-    angle = np.degrees(np.arctan2(vy, vx)) % 360
-    directions = ["E", "SE", "S", "SW", "W", "NW", "N", "NE"]
-    idx = int((angle + 22.5) // 45) % 8
-    heading = directions[idx]
-
-    return (vx, vy), speed, heading
+COLOR_ACCENT = (0, 210, 255)
+COLOR_BEV_UP = (255, 0, 0)
+COLOR_BEV_DOWN = (0, 165, 255)
 
 
 def draw_translucent_panel(
@@ -75,7 +45,6 @@ def draw_translucent_panel(
     alpha: float = 0.75,
     border_color: Tuple[int, int, int] = (60, 70, 80),
 ) -> None:
-    """Draws an anti-aliased semi-transparent rectangle overlay on the frame."""
     fh, fw = frame.shape[:2]
     x1, y1 = max(0, x), max(0, y)
     x2, y2 = min(fw, x + w), min(fh, y + h)
@@ -92,7 +61,6 @@ def draw_translucent_panel(
 
 
 class IntersectionAnalytics:
-    """Tracks historical metrics, cumulative counts, and intersection statistics."""
 
     def __init__(self):
         self.seen_vehicles = set()
@@ -150,11 +118,9 @@ def render_dashboard(
     show_hud: bool = True,
     bev_boxes: Optional[List[np.ndarray]] = None,
 ) -> np.ndarray:
-    """Renders visual overlays, tracking trajectories, and dashboard analytics HUD."""
     annotated = frame.copy()
     h, w = frame.shape[:2]
 
-    # Draw bird's eye view bounding polygons for available directions
     if bev_boxes:
         box_colors = [COLOR_BEV_UP, COLOR_BEV_DOWN]
         for idx, box in enumerate(bev_boxes):
@@ -169,7 +135,6 @@ def render_dashboard(
                     thickness=2,
                 )
 
-    # Render Object Trails and Bounding Boxes
     all_objects = [("vehicle", v) for v in active_vehicles]
 
     for obj_type, obj in all_objects:
@@ -198,17 +163,16 @@ def render_dashboard(
 
         cv2.rectangle(annotated, (bx1, by1), (bx2, by2), primary_color, 2)
 
-        if speed is not None:
-            label_text = f"#{tid} {cls_name} | {speed:.1f} MPH"
-        else:
-            label_text = f"#{tid} {cls_name}"
+        label_text = (
+            f"#{tid} {cls_name} | {speed:.1f} MPH"
+            if speed is not None
+            else f"#{tid} {cls_name}"
+        )
 
         font = cv2.FONT_HERSHEY_SIMPLEX
         scale = 0.40
         thickness = 1
-        (tw, th), baseline = cv2.getTextSize(
-            label_text, font, scale, thickness
-        )
+        (tw, th), _ = cv2.getTextSize(label_text, font, scale, thickness)
 
         pill_y1 = max(0, by1 - th - 6)
         pill_y2 = by1
@@ -216,7 +180,11 @@ def render_dashboard(
         pill_x2 = min(w, bx1 + tw + 8)
 
         cv2.rectangle(
-            annotated, (pill_x1, pill_y1), (pill_x2, pill_y2), primary_color, -1
+            annotated,
+            (pill_x1, pill_y1),
+            (pill_x2, pill_y2),
+            primary_color,
+            -1,
         )
         cv2.putText(
             annotated,
@@ -232,7 +200,6 @@ def render_dashboard(
     if not show_hud:
         return annotated
 
-    # Top Header Bar
     bar_height = 36
     draw_translucent_panel(
         annotated,
@@ -274,7 +241,6 @@ def render_dashboard(
         lineType=cv2.LINE_AA,
     )
 
-    # Analytics Widget Panel
     panel_w = 260
     panel_h = 160
     panel_x = w - panel_w - 14
@@ -350,7 +316,6 @@ def render_dashboard(
         )
         curr_y += 24
 
-    # Bottom Controls Bar
     ctrl_y = h - 22
     draw_translucent_panel(
         annotated,
@@ -384,7 +349,6 @@ def setup_bev_transform(
     bev_background: bool = False,
     num_lanes: int = 3,
 ):
-    """Computes BEV transformation matrix, output canvas, dimensions, and destination points."""
     if road_coords is None or len(road_coords) != 4:
         return None, None, 0, 0, None
 
@@ -429,27 +393,8 @@ def setup_bev_transform(
     return matrix, bev_frame, bev_width, bev_height, src_pts
 
 
-def main():
-    config = configparser.ConfigParser()
-    config.read("settings.ini")
-
-    print(f"[*] Initializing stream from: {config['gui']['source']}")
-    stream = CCTVStream(config["gui"]["source"])
-
-    print(f"[*] Loading YOLO tracking model: {config['model']['model']}")
-    model = YOLO(config["model"]["model"])
-
-    ret, frame = stream.read()
-    if not ret or frame is None:
-        print("[!] Error: Failed to retrieve video stream.")
-        stream.release()
-        sys.exit(1)
-
-    height, width = frame.shape[:2]
-    display_scale = config.getfloat("gui", "display-scale")
-    disp_w, disp_h = int(width * display_scale), int(height * display_scale)
-
-    source_key = config["gui"]["source"]
+def load_camera_config(source_key: str):
+    """Helper to safely load camera calibration config from config.json."""
     try:
         with open("config.json", "r") as file:
             data = json.load(file)
@@ -470,6 +415,55 @@ def main():
         else None
     )
 
+    num_lanes_up = cam_data.get("lanes_up", cam_data.get("num_lanes_up", 3))
+    num_lanes_down = cam_data.get(
+        "lanes_down", cam_data.get("num_lanes_down", 3)
+    )
+
+    distance_up = cam_data.get("distance_up", (0.0, 0.0))
+    distance_down = cam_data.get("distance_down", (0.0, 0.0))
+
+    return (
+        coords_up,
+        coords_down,
+        num_lanes_up,
+        num_lanes_down,
+        distance_up,
+        distance_down,
+    )
+
+
+def main():
+    config = configparser.ConfigParser()
+    config.read("settings.ini")
+
+    source_key = config["gui"]["source"]
+    print(f"[*] Initializing stream from: {source_key}")
+    stream = CCTVStream(source_key)
+
+    print(f"[*] Loading YOLO tracking model: {config['model']['model']}")
+    model = YOLO(config["model"]["model"])
+
+    ret, frame = stream.read()
+    if not ret or frame is None:
+        print("[!] Error: Failed to retrieve video stream.")
+        stream.release()
+        sys.exit(1)
+
+    height, width = frame.shape[:2]
+    display_scale = config.getfloat("gui", "display-scale")
+    disp_w, disp_h = int(width * display_scale), int(height * display_scale)
+
+    # Initial calibration parameters load
+    (
+        coords_up,
+        coords_down,
+        num_lanes_up,
+        num_lanes_down,
+        distance_up,
+        distance_down,
+    ) = load_camera_config(source_key)
+
     bev_background = False
 
     track_history = defaultdict(lambda: deque(maxlen=120))
@@ -486,9 +480,11 @@ def main():
         )
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")
         writer = cv2.VideoWriter(
-            config["model"]["save"], fourcc, stream.target_fps, (disp_w, disp_h)
+            config["model"]["save"],
+            fourcc,
+            stream.target_fps,
+            (disp_w, disp_h),
         )
-        print(f"[+] Recording output video to: {config['model']['save']}")
 
     show_trails = config.getboolean("gui", "show-trails")
     show_hud = config.getboolean("gui", "show-hud")
@@ -497,13 +493,11 @@ def main():
     target_class_ids = list(ALL_TARGET_CLASSES.keys())
 
     print(f"[+] Monitoring {stream.display_name} @ {stream.target_fps:.1f} FPS")
-    print("[+] Targets: Cars/Vehicles (Speed Unit: px/frame)")
-    print(
-        "[+] Controls: 'SPACE' = Pause, 'h' = Toggle HUD, 't' = Toggle Trails, 'r' = Reset, 'q' = Quit\n"
-    )
 
     fps_timer = time.time()
     current_fps = stream.target_fps
+
+    bev_frame_up, bev_frame_down = None, None
 
     while True:
         loop_start = time.time()
@@ -522,25 +516,16 @@ def main():
             # Perform manual GUI calibration if coordinates are missing
             if coords_up is None and coords_down is None:
                 calibrate(frame, source_key, display_scale)
-                with open("config.json", "r") as file:
-                    data = json.load(file)
-                cam_data = data.get(source_key, {})
-                coords_up = (
-                    np.float32(cam_data["points_up"])
-                    if "points_up" in cam_data
-                    else np.float32(cam_data.get("points"))
-                )
-                coords_down = (
-                    np.float32(cam_data["points_down"])
-                    if "points_down" in cam_data
-                    else None
-                )
+                (
+                    coords_up,
+                    coords_down,
+                    num_lanes_up,
+                    num_lanes_down,
+                    distance_up,
+                    distance_down,
+                ) = load_camera_config(source_key)
 
-            num_lanes_up = cam_data.get("num_lanes_up", 3)
-            num_lanes_down = cam_data.get("num_lanes_down", 3)
-            num_dashes = cam_data.get("num_dashes", 4)
-
-            # Setup dual perspective transforms for both directional lanes
+            # Setup perspective transforms
             (
                 matrix_up,
                 bev_frame_up,
@@ -557,7 +542,11 @@ def main():
                 bev_h_down,
                 src_pts_down,
             ) = setup_bev_transform(
-                coords_down, display_scale, frame, bev_background, num_lanes_down
+                coords_down,
+                display_scale,
+                frame,
+                bev_background,
+                num_lanes_down,
             )
 
             # YOLO multi-object tracking (ByteTrack)
@@ -586,11 +575,11 @@ def main():
                     ground_pt = ((x1 + x2) / 2.0, y2)
                     track_history[track_id].append(ground_pt)
 
-                    input_pts = np.array(ground_pt, dtype=np.float32).reshape(
-                        -1, 1, 2
-                    )
+                    input_pts = np.array(
+                        ground_pt, dtype=np.float32
+                    ).reshape(-1, 1, 2)
 
-                    # Transform point to UP perspective stream if configured
+                    # Transform point to UP perspective
                     bx_up, by_up = -1, -1
                     if matrix_up is not None:
                         t_pt = (
@@ -601,7 +590,7 @@ def main():
                         bx_up, by_up = t_pt
                         track_bev_history_up[track_id].append(t_pt)
 
-                    # Transform point to DOWN perspective stream if configured
+                    # Transform point to DOWN perspective
                     bx_dn, by_dn = -1, -1
                     if matrix_down is not None:
                         t_pt = (
@@ -612,40 +601,75 @@ def main():
                         bx_dn, by_dn = t_pt
                         track_bev_history_down[track_id].append(t_pt)
 
-                    # Calculate motion speed selecting the active valid BEV history
+                    # Check zone presence
+                    in_up = (
+                        (0 <= bx_up < bev_w_up and 0 <= by_up < bev_h_up)
+                        if matrix_up is not None
+                        else False
+                    )
+                    in_down = (
+                        (0 <= bx_dn < bev_w_down and 0 <= by_dn < bev_h_down)
+                        if matrix_down is not None
+                        else False
+                    )
+
+                    # Speed calculation using real-world distances
                     if track_id in vehicle_speeds:
                         speed = vehicle_speeds[track_id]
                         velocity = (0.0, 0.0)
                     else:
-                        active_bev_hist = (
-                            track_bev_history_up.get(track_id)
-                            if 0 <= bx_up < bev_w_up and 0 <= by_up < bev_h_up
-                            else track_bev_history_down.get(track_id)
-                        )
-                        if active_bev_hist is None:
+                        if in_up:
+                            direction = "up"
+                            active_bev_hist = track_bev_history_up.get(
+                                track_id, []
+                            )
+                            active_h = bev_h_up
+                            active_dist = distance_up
+                        elif in_down:
+                            direction = "down"
+                            active_bev_hist = track_bev_history_down.get(
+                                track_id, []
+                            )
+                            active_h = bev_h_down
+                            active_dist = distance_down
+                        else:
+                            direction = "none"
                             active_bev_hist = []
+                            active_h = 0
+                            active_dist = (0.0, 0.0)
 
-                        active_h = (
-                            bev_h_up
-                            if 0 <= bx_up < bev_w_up and 0 <= by_up < bev_h_up
-                            else bev_h_down
+                        dist_w = (
+                            active_dist[0]
+                            if active_dist and len(active_dist) > 0
+                            else 0.0
                         )
-                        active_w = (
-                            bev_w_up
-                            if 0 <= bx_up < bev_w_up and 0 <= by_up < bev_h_up
-                            else bev_w_down
+                        dist_l = (
+                            active_dist[1]
+                            if active_dist and len(active_dist) > 1
+                            else 0.0
                         )
 
-                        velocity, speed = calculate_vehicle_speed(
-                            bev_history=active_bev_hist,
-                            bev_height=active_h,
-                            bev_width=active_w,
-                            num_dashes=num_dashes,
-                            num_lanes=num_lanes_up,
-                            fps=stream.target_fps,
-                        )
+                        if (
+                            len(active_bev_hist) > 0
+                            and active_h > 0
+                            and dist_l > 0
+                        ):
+                            velocity, speed = calculate_vehicle_speed(
+                                bev_history=active_bev_hist,
+                                bev_height=active_h,
+                                direction=direction,
+                                fps=stream.target_fps,
+                                length=dist_l,
+                                width=dist_w,
+                            )
+                        else:
+                            velocity, speed = (0.0, 0.0), None
+
                         if speed is not None:
-                            print(f"#{track_id} speed: {speed:.2f} MPH")
+                            print(
+                                f"#{track_id} {direction} speed: {speed:.2f}"
+                                " MPH"
+                            )
                             vehicle_speeds[track_id] = speed
 
                     cls_label = ALL_TARGET_CLASSES.get(
@@ -673,7 +697,7 @@ def main():
                         else f"#{track_id} {cls_label}"
                     )
 
-                    # Render top-down vehicle overlay on Upstream BEV
+                    # Top-down BEV vehicle overlays
                     if (
                         bev_frame_up is not None
                         and 0 <= bx_up < bev_w_up
@@ -692,7 +716,6 @@ def main():
                             1,
                         )
 
-                    # Render top-down vehicle overlay on Downstream BEV
                     if (
                         bev_frame_down is not None
                         and 0 <= bx_dn < bev_w_down
@@ -717,7 +740,7 @@ def main():
 
                     active_vehicles.append(obj_data)
 
-            # Cleanup stale tracks
+            # Cleanup stale tracking IDs
             for tid in list(track_history.keys()):
                 if (
                     tid not in current_active_ids
@@ -726,12 +749,14 @@ def main():
                     track_history[tid].popleft()
                     if len(track_history[tid]) == 0:
                         del track_history[tid]
+
             for tid in list(track_bev_history_up.keys()):
                 if tid not in current_active_ids:
                     if len(track_bev_history_up[tid]) > 0:
                         track_bev_history_up[tid].popleft()
                     if len(track_bev_history_up[tid]) == 0:
                         del track_bev_history_up[tid]
+
             for tid in list(track_bev_history_down.keys()):
                 if tid not in current_active_ids:
                     if len(track_bev_history_down[tid]) > 0:
@@ -739,19 +764,13 @@ def main():
                     if len(track_bev_history_down[tid]) == 0:
                         del track_bev_history_down[tid]
 
-            for tid in list(track_bev_history_up.keys()):
-                if tid not in current_active_ids:
-                    if len(track_bev_history_up[tid]) > 0:
-                        track_bev_history_up[tid].popleft()
-                    if len(track_bev_history_up[tid]) == 0:
-                        del track_bev_history_up[tid]
             for tid in list(vehicle_speeds.keys()):
                 if tid not in current_active_ids:
                     del vehicle_speeds[tid]
 
             update_master_trajectory_store(track_history)
 
-            # Update FPS counter
+            # FPS counter
             now = time.time()
             fps_delta = now - fps_timer
             if fps_delta >= 0.2:
@@ -793,18 +812,36 @@ def main():
             break
         elif key == 32:  # Spacebar
             paused = not paused
-        elif key == ord("h") or key == ord("H"):
+        elif key in (ord("h"), ord("H")):
             show_hud = not show_hud
-        elif key == ord("t") or key == ord("T"):
+        elif key in (ord("t"), ord("T")):
             show_trails = not show_trails
-        elif key == ord("r") or key == ord("R"):
+        elif key in (ord("r"), ord("R")):
             analytics.reset()
             print("[+] Intersection counters reset.")
-        elif key == ord("c") or key == ord("C"):
-            # Auto-calibrate dual trapezoids from master point cloud store
-            coords_up, coords_down, num_lanes_up, num_lanes_down = auto_calibrate(frame=frame)
-            with open("config.json", "r") as file:
-                data = json.load(file)
+        elif key in (ord("c"), ord("C")):
+            # Auto-calibrate dual trapezoids
+            res = auto_calibrate(
+                frame=frame,
+                bev_frame_down=bev_frame_down,
+                bev_frame_up=bev_frame_up,
+            )
+            (
+                coords_up,
+                coords_down,
+                num_lanes_up,
+                num_lanes_down,
+                distance_up,
+                distance_down,
+                num_dashes_up,
+                num_dashes_down,
+            ) = res
+
+            try:
+                with open("config.json", "r") as file:
+                    data = json.load(file)
+            except FileNotFoundError:
+                data = {}
 
             if source_key not in data:
                 data[source_key] = {}
@@ -812,14 +849,20 @@ def main():
             if coords_up is not None:
                 data[source_key]["points_up"] = coords_up.tolist()
                 data[source_key]["lanes_up"] = num_lanes_up
+                data[source_key]["distance_up"] = distance_up
+                data[source_key]["num_dashes_up"] = num_dashes_up
+
             if coords_down is not None:
                 data[source_key]["points_down"] = coords_down.tolist()
-                data[source_key]["down"] = num_lanes_down
+                data[source_key]["lanes_down"] = num_lanes_down
+                data[source_key]["distance_down"] = distance_down
+                data[source_key]["num_dashes_down"] = num_dashes_down
 
             with open("config.json", "w") as file:
                 json.dump(data, file, indent=4)
-            print("[+] Auto-calibrated both BEV directions.")
-        elif key == ord("b") or key == ord("B"):
+
+            print("[+] Auto-calibrated both BEV directions successfully.")
+        elif key in (ord("b"), ord("B")):
             bev_background = not bev_background
 
     stream.release()
