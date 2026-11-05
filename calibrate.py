@@ -1,15 +1,12 @@
 import json
 import cv2
-import os
-import numpy as np
 from scipy.ndimage import gaussian_filter1d
 from scipy.signal import find_peaks
 from scipy.spatial import cKDTree
 from collections import Counter
-
-
 import os
 import numpy as np
+import math
 
 
 def update_master_trajectory_store(
@@ -288,15 +285,9 @@ def calibrate(
             cv2.destroyWindow("Select 4 Ground Points")
             return clicked_points, num_lanes, num_dashes
 
-import numpy as np
-from scipy.ndimage import gaussian_filter1d
-from scipy.signal import find_peaks
-
 
 def auto_calibrate(
     frame: np.ndarray,
-    bev_frame_up: np.ndarray,
-    bev_frame_down: np.ndarray,
     store_file="trajectories_store.npz"
 ):
     if not os.path.exists(store_file):
@@ -307,8 +298,6 @@ def auto_calibrate(
     up_pts = data.get("up", np.empty((0, 2), dtype=np.float32))
     down_pts = data.get("down", np.empty((0, 2), dtype=np.float32))
 
-
-
     filter_up = filter_pts(up_pts)
     filter_down = filter_pts(down_pts)
     point_cloud = plot_point_cloud_on_frame(frame=frame.copy(), radius=1, pts_up=filter_up, pts_down=filter_down)
@@ -317,14 +306,10 @@ def auto_calibrate(
     print("filter down points: " + (str) (len(down_pts) - len(filter_down)))
     lines_up, lane_lines_up, num_lanes_up  = plot_lane_peaks(frame=frame, pts=filter_up)
     lines_down, lane_lines_down, num_lanes_down = plot_lane_peaks(frame=lines_up, pts=filter_down)
-    num_dashes_up = detect_num_dashes(bev_frame_up, num_lanes_up)
-    num_dashes_down = detect_num_dashes(bev_frame_down, num_lanes_down)
     cv2.imshow("traffic peaks", lines_down)
     coords_up = calculate_bounds(lane_lines_up)
     coords_down = calculate_bounds(lane_lines_down)
-    distance_up = find_real_world_distance(coords_up, num_lanes_up, num_dashes_up)
-    distance_down = find_real_world_distance(coords_down, num_lanes_down, num_dashes_down)
-    return coords_up, coords_down, num_lanes_up, num_lanes_down, distance_up, distance_down, num_dashes_up, num_dashes_down
+    return coords_up, coords_down, num_lanes_up, num_lanes_down
 
 def detect_num_lanes(
     pts: np.ndarray,
@@ -462,8 +447,8 @@ def plot_lane_peaks(
         return annotated, 0
 
     # 1. Establish perspective Y-range (Top to Bottom)
-    y_min = float(np.percentile(pts[:, 1], 20))  # Top of road (near horizon)
-    y_max = float(np.percentile(pts[:, 1], 80))  # Bottom of road (foreground)
+    y_min = float(np.percentile(pts[:, 1], 10))  # Top of road (near horizon)
+    y_max = float(np.percentile(pts[:, 1], 90))  # Bottom of road (foreground)
 
     if y_max <= y_min:
         return annotated, 0
@@ -735,125 +720,99 @@ def calculate_bounds(
 
     return bbox
 
-from typing import Tuple
-import numpy as np
-
-
-def find_real_world_distance(
-    bounds: np.ndarray,
-    num_lanes: int = 3,
-    num_dashes: float = 3.0,
-    lane_width: float = 12.0,  # Standard US highway lane width = 12.0 ft (3.65m)
-    dash_length: float = 40.0,  # Standard MUTCD dash + gap cycle = 40.0 ft (12.2m)
-) -> Tuple[float, float]:
-    """Calculates real-world (width, length) of a road box using the number of
-
-    lanes and number of dash-gap cycles (with geometric BEV fallback).
-
-    Parameters:
-        bounds (np.ndarray, optional): 4-point ground trapezoid [[TL], [TR],
-          [BR], [BL]]
-        num_lanes (int): Number of active driving lanes
-        num_dashes (float): Number of 40-foot dash-gap cycles spanning the
-          box[cite: 1]
-        lane_width (float): Physical lane width in feet (default: 12.0 ft)[cite: 1]
-        dash_length (float): Physical dash-gap cycle length in feet (default:
-          40.0 ft)[cite: 1]
-
-    Returns:
-        Tuple[float, float]: (real_width, real_length) in feet
-    """
-    # 1. Total real-world physical width across active lanes[cite: 1]
-    real_width = float(num_lanes * lane_width)
-
-    # 2. Total real-world physical length across dash-gap cycles[cite: 1]
-    if num_dashes is not None and num_dashes > 0:
-        real_length = float(num_dashes * dash_length)
-    elif bounds is not None and len(bounds) == 4:
-        # Fallback to Isotropic BEV pixel scale if num_dashes is missing or 0
-        tl, tr, br, bl = np.float32(bounds)
-
-        width_top = np.linalg.norm(tr - tl)
-        width_bottom = np.linalg.norm(br - bl)
-        bev_width_px = max(width_top, width_bottom)
-
-        height_left = np.linalg.norm(bl - tl)
-        height_right = np.linalg.norm(br - tr)
-        bev_height_px = max(height_left, height_right)
-
-        if bev_width_px > 0:
-            scale_x = real_width / bev_width_px
-            real_length = float(bev_height_px * scale_x)
-        else:
-            real_length = 0.0
-    else:
-        real_length = 0.0
-
-    print(f"length: {real_length:.2f} ft, width: {real_width:.2f} ft")
-
-    return (round(real_width, 2), round(real_length, 2))
-
-def detect_num_dashes(
-    bev_frame: np.ndarray, num_lanes: int = 3
+def get_length(
+        bev_frame: np.ndarray, num_lanes: int = 3
 ) -> float:
     """Accurately counts painted dashes in BEV space by sampling narrow vertical
-
     strips along lane divider lines rather than averaging the full image width.
+    Uses masked BEV frame to remove vehicles to isolate dashes
     """
     if bev_frame is None or bev_frame.size == 0:
         return 3.0
 
-    gray = cv2.cvtColor(bev_frame, cv2.COLOR_BGR2GRAY)
-    h, w = gray.shape
+    if len(bev_frame.shape) == 3:
+        gray = cv2.cvtColor(bev_frame, cv2.COLOR_BGR2GRAY)
+        viz_frame = bev_frame.copy()
+    else:
+        gray = bev_frame.copy()
+        viz_frame = cv2.cvtColor(bev_frame, cv2.COLOR_GRAY2BGR)
 
-    # 1. Locate lane divider X positions (valleys between lane centers)
-    divider_x_positions = []
+    h, w = gray.shape[:2]
+
+    # 1. Thresholding to isolate bright white road paint
+    _, binary = cv2.threshold(gray, 130, 255, cv2.THRESH_BINARY)
+
+    # Vertical opening to eliminate horizontal noise/reflections
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 7))
+    binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel)
+
+    # 2. Locate isolated lane divider X positions
     lane_width_px = w / float(num_lanes)
-    for i in range(1, num_lanes):
-        divider_x_positions.append(int(i * lane_width_px))
-
+    divider_x_positions = [int(i * lane_width_px) for i in range(1, num_lanes)]
     if not divider_x_positions:
         divider_x_positions = [int(w / 2.0)]
 
-    all_lane_dashes = []
-
-    # 2. Extract narrow 10-pixel vertical strip around each divider line
-    strip_w = 50
+    strip_w = 30  # Half-width of vertical strip around divider line
+    dash_lengths = []
 
     for div_x in divider_x_positions:
         x_start = max(0, div_x - strip_w)
         x_end = min(w, div_x + strip_w)
 
-        # Slice narrow vertical strip along the divider
-        strip = gray[:, x_start:x_end]
-        y_profile = np.mean(strip, axis=1)
+        # Slice narrow isolated vertical strip along the divider line
+        strip = binary[:, x_start:x_end]
 
-        # Light smoothing (sigma=2.0) to preserve small horizon dashes
-        smoothed = gaussian_filter1d(y_profile.astype(np.float32), sigma=2.0)
-
-        # Dynamic sensitivity: set min prominence to 3% of max intensity span
-        min_prominence = max((np.max(smoothed) - np.min(smoothed)) * 0.04, 3.0)
-
-        # Minimum distance between 40ft dash cycles in BEV space
-        min_dash_dist_px = max(5.0, h / 20.0)
-
-        peaks, _ = find_peaks(
-            smoothed, distance=min_dash_dist_px, prominence=min_prominence
+        # Extract contours within this specific lane segment
+        contours, _ = cv2.findContours(
+            strip, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
         )
 
-        if len(peaks) > 0:
-            all_lane_dashes.append(len(peaks))
-    print(all_lane_dashes)
-    # Return the maximum detected dash count across all divider lines
-    detected_dashes = max(all_lane_dashes) if all_lane_dashes else 0
+        for cnt in contours:
+            x, y, bw, bh = cv2.boundingRect(cnt)
+            # Filter for vertically elongated dashes (height >= 10px, height > width)
+            if bh >= 10 and bh > bw and bw <= 35:
+                # Map local strip coordinates back to global BEV frame coordinates
+                x_mid_global = x_start + x + (bw // 2)
+                pt_start = (x_mid_global, y)
+                pt_end = (x_mid_global, y + bh)
+                # find distance of points and add to list
+                dash_lengths.append(math.dist(pt_start, pt_end))
+                # Draw single centerline per dash
+                cv2.line(
+                    viz_frame,
+                    pt_start,
+                    pt_end,
+                    (0, 255, 0),
+                    2,
+                    lineType=cv2.LINE_AA,
+                )
+    # return 0 if can't calculate
+    if (len(dash_lengths) == 0):
+        return 0
 
-    # If faint/faded lines yield less than 1, fall back to geometric aspect estimation
-    if detected_dashes < 1:
-        aspect_ratio = float(h) / float(w)
-        estimated_dashes = (num_lanes * 12.0 * aspect_ratio) / 40.0
-        return round(float(estimated_dashes), 2)
+    # filter outliers/clipped dashes
+    def remove_outliers_iqr(list):
+        q1 = np.percentile(list, 25)
+        q3 = np.percentile(list, 75)
+        iqr = q3 - q1
 
-    return float(detected_dashes)
+        lower_bound = q1 - 1.5 * iqr
+        upper_bound = q3 + 1.5 * iqr
+
+        # Filter the list
+        return [x for x in list if lower_bound <= x <= upper_bound]
+    filtered_lengths = remove_outliers_iqr(dash_lengths)
+    avg_length = sum(filtered_lengths) / float(len(filtered_lengths))
+
+    ft_per_px = 10.0 / avg_length  # how many feet per pixel of the frame
+    frame_length_px = bev_frame.shape[:2][0]
+    frame_length_ft = frame_length_px * ft_per_px  # length of frame in feet
+
+    cv2.imshow("frame with lanes", viz_frame)
+    # cv2.waitKey(0)
+    # cv2.destroyAllWindows()
+    print(f"Estimated length: {frame_length_ft:.2f}ft")
+    return frame_length_ft
 
 def plot_point_cloud_on_frame(
     frame: np.ndarray,

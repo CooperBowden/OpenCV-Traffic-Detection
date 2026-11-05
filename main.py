@@ -14,7 +14,7 @@ from ultralytics import YOLO
 from calculate_motion_stats import calculate_vehicle_speed
 from calibrate import (
     auto_calibrate,
-    calibrate,
+    get_length,
     update_master_trajectory_store,
 )
 from cctv_stream import CCTVStream
@@ -33,6 +33,7 @@ COLOR_TEXT_MUTED = (160, 175, 190)
 COLOR_ACCENT = (0, 210, 255)
 COLOR_BEV_UP = (255, 0, 0)
 COLOR_BEV_DOWN = (0, 165, 255)
+
 
 
 def draw_translucent_panel(
@@ -65,14 +66,20 @@ class highway_analytics:
     def __init__(self):
         self.seen_vehicles = set()
         self.speed_history = deque(maxlen=60)
+        self.speed_history_up = deque(maxlen=60)
+        self.speed_history_down = deque(maxlen=60)
         self.fps_history = deque(maxlen=30)
         self.start_time = time.time()
 
     def update(self, active_vehicles: List[dict], fps: float):
         for v in active_vehicles:
+
             self.seen_vehicles.add(v["id"])
             if v["speed"] is not None and v["speed"] >= 0.6:
-                self.speed_history.append(v["speed"])
+                if v["direction"] == "up":
+                    self.speed_history_up.append(v["speed"])
+                if v["direction"] == "down":
+                    self.speed_history_down.append(v["speed"])
 
         if fps > 0:
             self.fps_history.append(fps)
@@ -82,9 +89,14 @@ class highway_analytics:
         return len(self.seen_vehicles)
 
     @property
-    def average_vehicle_speed(self) -> float:
+    def average_vehicle_speed_up(self) -> float:
         return (
-            float(np.mean(self.speed_history)) if self.speed_history else 0.0
+            float(np.mean(self.speed_history_up)) if self.speed_history_up else 0.0
+        )
+    @property
+    def average_vehicle_speed_down(self) -> float:
+        return (
+            float(np.mean(self.speed_history_down)) if self.speed_history_down else 0.0
         )
 
     @property
@@ -113,6 +125,7 @@ def render_dashboard(
     frame: np.ndarray,
     stream: CCTVStream,
     analytics: highway_analytics,
+    distances: List[int],
     active_vehicles: List[dict],
     show_trails: bool = True,
     show_hud: bool = True,
@@ -136,7 +149,7 @@ def render_dashboard(
                 )
 
     all_objects = [("vehicle", v) for v in active_vehicles]
-
+    font = cv2.FONT_HERSHEY_SIMPLEX
     for obj_type, obj in all_objects:
         bx1, by1, bx2, by2 = map(int, obj["box"])
         tid = obj["id"]
@@ -169,7 +182,6 @@ def render_dashboard(
             else f"#{tid} {cls_name}"
         )
 
-        font = cv2.FONT_HERSHEY_SIMPLEX
         scale = 0.40
         thickness = 1
         (tw, th), _ = cv2.getTextSize(label_text, font, scale, thickness)
@@ -224,7 +236,7 @@ def render_dashboard(
         annotated,
         header_title,
         (14, 23),
-        cv2.FONT_HERSHEY_SIMPLEX,
+        font,
         0.48,
         COLOR_TEXT_WHITE,
         1,
@@ -234,7 +246,7 @@ def render_dashboard(
         annotated,
         fps_text,
         (w - 90, 23),
-        cv2.FONT_HERSHEY_SIMPLEX,
+        font,
         0.48,
         COLOR_ACCENT,
         1,
@@ -260,7 +272,7 @@ def render_dashboard(
         annotated,
         "METRICS & TRAFFIC FLOW",
         (panel_x + 12, panel_y + 20),
-        cv2.FONT_HERSHEY_SIMPLEX,
+        font,
         0.42,
         COLOR_ACCENT,
         1,
@@ -285,11 +297,25 @@ def render_dashboard(
             COLOR_VEHICLE,
         ),
         (
-            "Avg Vehicle Speed",
-            f"{analytics.average_vehicle_speed:.1f} MPH",
+            "Avg Speed Up",
+            f"{analytics.average_vehicle_speed_up:.1f} MPH",
             COLOR_TEXT_WHITE,
         ),
-        ("Traffic Density", density_label, density_color),
+        (
+            "Avg Speed Down",
+            f"{analytics.average_vehicle_speed_down:.1f} MPH",
+            COLOR_TEXT_WHITE,
+        ),
+        (
+            "Distance Up",
+            f"{distances[0]:.1f} ft",
+            COLOR_TEXT_WHITE,
+        ),
+        (
+            "Distance Down",
+            f"{distances[1]:.1f} ft",
+            COLOR_TEXT_WHITE,
+        ),
     ]
 
     curr_y = panel_y + 48
@@ -298,7 +324,7 @@ def render_dashboard(
             annotated,
             label,
             (panel_x + 14, curr_y),
-            cv2.FONT_HERSHEY_SIMPLEX,
+            font,
             0.38,
             COLOR_TEXT_MUTED,
             1,
@@ -308,7 +334,7 @@ def render_dashboard(
             annotated,
             val,
             (panel_x + 130, curr_y),
-            cv2.FONT_HERSHEY_SIMPLEX,
+            font,
             0.38,
             val_color,
             1,
@@ -332,7 +358,7 @@ def render_dashboard(
         annotated,
         controls_text,
         (14, ctrl_y + 12),
-        cv2.FONT_HERSHEY_SIMPLEX,
+        font,
         0.36,
         COLOR_TEXT_MUTED,
         1,
@@ -346,6 +372,7 @@ def setup_bev_transform(
     road_coords: Optional[np.ndarray],
     display_scale: float,
     frame: np.ndarray,
+    masked_frame: np.ndarray,
     bev_background: bool = True,
     num_lanes: int = 3,
 ):
@@ -371,6 +398,8 @@ def setup_bev_transform(
     )
     matrix = cv2.getPerspectiveTransform(src_pts, dst_pts)
 
+    bev_frame_masked = cv2.warpPerspective(masked_frame, matrix, (bev_width, bev_height))
+
     if bev_background:
         bev_frame = cv2.warpPerspective(frame, matrix, (bev_width, bev_height))
     else:
@@ -390,7 +419,7 @@ def setup_bev_transform(
             thickness=1,
         )
 
-    return matrix, bev_frame, bev_width, bev_height, src_pts
+    return matrix, bev_frame, bev_frame_masked, bev_width, bev_height, src_pts
 
 
 def load_camera_config(source_key: str):
@@ -422,6 +451,7 @@ def load_camera_config(source_key: str):
 
     distance_up = cam_data.get("distance_up", (0.0, 0.0))
     distance_down = cam_data.get("distance_down", (0.0, 0.0))
+    dash_length = cam_data.get("dash_length", 0)
 
     return (
         coords_up,
@@ -430,12 +460,14 @@ def load_camera_config(source_key: str):
         num_lanes_down,
         distance_up,
         distance_down,
+        dash_length,
     )
 
 
 def main():
     config = configparser.ConfigParser()
     config.read("settings.ini")
+    font = cv2.FONT_HERSHEY_SIMPLEX
 
     source_key = config["gui"]["source"]
     print(f"[*] Initializing stream from: {source_key}")
@@ -462,6 +494,7 @@ def main():
         num_lanes_down,
         distance_up,
         distance_down,
+        dash_length
     ) = load_camera_config(source_key)
 
     bev_background = True
@@ -497,7 +530,7 @@ def main():
     fps_timer = time.time()
     current_fps = stream.target_fps
 
-    bev_frame_up, bev_frame_down = None, None
+    bev_frame_annotated_up, bev_frame_annotated_down = None, None
 
     while True:
         loop_start = time.time()
@@ -513,34 +546,6 @@ def main():
                     frame, (disp_w, disp_h), interpolation=cv2.INTER_LINEAR
                 )
 
-            # Perform manual GUI calibration if coordinates are missing
-            if not (coords_up is None and coords_down is None):
-                # Setup perspective transforms
-                (
-                    matrix_up,
-                    bev_frame_up,
-                    bev_w_up,
-                    bev_h_up,
-                    src_pts_up,
-                ) = setup_bev_transform(
-                    coords_up, display_scale, frame, bev_background, num_lanes_up
-                )
-                (
-                    matrix_down,
-                    bev_frame_down,
-                    bev_w_down,
-                    bev_h_down,
-                    src_pts_down,
-                ) = setup_bev_transform(
-                    coords_down,
-                    display_scale,
-                    frame,
-                    bev_background,
-                    num_lanes_down,
-                )
-            else:
-                matrix_down = None
-                matrix_up = None
             # YOLO multi-object tracking (ByteTrack)
             results = model.track(
                 frame,
@@ -551,6 +556,54 @@ def main():
                 device=config.getint("model", "device"),
                 verbose=False,
             )[0]
+
+            # create mask for BEV exclusion to detect lanes without car interference
+            veh_exclusion_mask = np.ones((disp_h, disp_w), dtype=np.uint8) * 255
+            pad = 10  # Padding around bounding boxes to mask vehicle body and shadows
+
+            if results.boxes is not None and len(results.boxes) > 0:
+                boxes_np = results.boxes.xyxy.cpu().numpy()
+                for box in boxes_np:
+                    x1, y1, x2, y2 = map(int, box)
+                    px1, py1 = max(0, x1 - pad), max(0, y1 - pad)
+                    px2, py2 = min(disp_w, x2 + pad), min(disp_h, y2 + pad)
+                    cv2.rectangle(veh_exclusion_mask, (px1, py1), (px2, py2), 0, -1)
+
+            # Apply 2D mask to clear out vehicles before perspective warping
+            masked_frame = cv2.bitwise_and(frame, frame, mask=veh_exclusion_mask)
+
+            # check if calibration is done
+            if not (coords_up is None and coords_down is None):
+                # Setup perspective transforms
+                (
+                    matrix_up,
+                    bev_frame_annotated_up,
+                    bev_frame_masked_up,
+                    bev_w_up,
+                    bev_h_up,
+                    src_pts_up,
+                ) = setup_bev_transform(
+                    coords_up, display_scale, frame, masked_frame, bev_background, num_lanes_up
+                )
+                (
+                    matrix_down,
+                    bev_frame_annotated_down,
+                    bev_frame_masked_down,
+                    bev_w_down,
+                    bev_h_down,
+                    src_pts_down,
+                ) = setup_bev_transform(
+                    coords_down,
+                    display_scale,
+                    frame,
+                    masked_frame,
+                    bev_background,
+                    num_lanes_down,
+                )
+            else:
+                matrix_down = None
+                matrix_up = None
+
 
             active_vehicles = []
             current_active_ids = set()
@@ -630,39 +683,35 @@ def main():
                             active_h = 0
                             active_dist = (0.0, 0.0)
 
-                        dist_w = (
-                            active_dist[0]
-                            if active_dist and len(active_dist) > 0
-                            else 0.0
-                        )
-                        dist_l = (
-                            active_dist[1]
-                            if active_dist and len(active_dist) > 1
-                            else 0.0
-                        )
 
                         if (
                             len(active_bev_hist) > 0
                             and active_h > 0
-                            and dist_l > 0
+                            and active_dist != (0.0, 0.0)
                         ):
                             velocity, speed = calculate_vehicle_speed(
                                 bev_history=active_bev_hist,
                                 bev_height=active_h,
                                 direction=direction,
                                 fps=stream.target_fps,
-                                length=dist_l,
-                                width=dist_w,
+                                length=active_dist,
                             )
                         else:
                             velocity, speed = (0.0, 0.0), None
 
+                        # Flag when vehicle speed is 120% greater than average
                         if speed is not None:
-                            print(
-                                f"#{track_id} {direction} speed: {speed:.2f}"
-                                " MPH"
-                            )
+                            print(f"#{track_id} {direction} speed: {speed:.2f} MPH")
                             vehicle_speeds[track_id] = speed
+                            if (direction == "up"):
+                                avg_speed = analytics.average_vehicle_speed_up
+                            if (direction == "down"):
+                                avg_speed = analytics.average_vehicle_speed_down
+                            if (speed > (avg_speed * 1.20) and avg_speed != 0):
+                                print(f"*High speed Detected [{track_id} {direction}]: {speed:.2f} MPH - "
+                                      f"{(speed/avg_speed)*100:.1}% faster than average "
+                                      f"({avg_speed} MPH)")
+
 
                     cls_label = ALL_TARGET_CLASSES.get(
                         cls_id, model.names.get(cls_id, "object")
@@ -674,6 +723,7 @@ def main():
                         "class": cls_label,
                         "center": ground_pt,
                         "velocity": velocity,
+                        "direction": direction,
                         "speed": speed,
                         "history": list(track_history[track_id]),
                     }
@@ -691,40 +741,40 @@ def main():
 
                     # Top-down BEV vehicle overlays
                     if (
-                        bev_frame_up is not None
+                        bev_frame_annotated_up is not None
                         and 0 <= bx_up < bev_w_up
                         and 0 <= by_up < bev_h_up
                     ):
                         cv2.circle(
-                            bev_frame_up, (bx_up, by_up), 6, primary_color, -1
+                            bev_frame_annotated_up, (bx_up, by_up), 6, primary_color, -1
                         )
                         cv2.putText(
-                            bev_frame_up,
+                            bev_frame_annotated_up,
                             label_text,
                             (bx_up + 8, by_up + 4),
-                            cv2.FONT_HERSHEY_SIMPLEX,
+                            font,
                             0.4,
                             (0, 0, 0),
                             1,
                         )
 
                     if (
-                        bev_frame_down is not None
+                        bev_frame_annotated_down is not None
                         and 0 <= bx_dn < bev_w_down
                         and 0 <= by_dn < bev_h_down
                     ):
                         cv2.circle(
-                            bev_frame_down,
+                            bev_frame_annotated_down,
                             (bx_dn, by_dn),
                             6,
                             primary_color,
                             -1,
                         )
                         cv2.putText(
-                            bev_frame_down,
+                            bev_frame_annotated_down,
                             label_text,
                             (bx_dn + 8, by_dn + 4),
-                            cv2.FONT_HERSHEY_SIMPLEX,
+                            font,
                             0.4,
                             (0, 0, 0),
                             1,
@@ -760,7 +810,7 @@ def main():
                 if tid not in current_active_ids:
                     del vehicle_speeds[tid]
 
-            update_master_trajectory_store(track_history)
+            update_master_trajectory_store(track_history, store_file=(f"trajectories_{source_key}.npz"))
 
             # FPS counter
             now = time.time()
@@ -781,20 +831,30 @@ def main():
                 frame=frame,
                 stream=stream,
                 analytics=analytics,
+                distances=[distance_up, distance_down],
                 active_vehicles=active_vehicles,
                 show_trails=show_trails,
                 show_hud=show_hud,
                 bev_boxes=bev_boxes,
             )
-
+            if (matrix_down is None and matrix_up is None):
+                cv2.putText(
+                    annotated_frame,
+                    "Press C to calibrate for speed information",
+                    (14, 100),
+                    font,
+                    1,
+                    (0, 255, 0),
+                    2,
+                )
             if writer:
                 writer.write(annotated_frame)
 
-            cv2.imshow("Intersection Analytics Dashboard", annotated_frame)
-            if bev_frame_up is not None:
-                cv2.imshow("BEV - Up Stream", bev_frame_up)
-            if bev_frame_down is not None:
-                cv2.imshow("BEV - Down Stream", bev_frame_down)
+            cv2.imshow("Main Frame", annotated_frame)
+            if bev_frame_annotated_up is not None:
+                cv2.imshow("BEV - Up Stream", bev_frame_annotated_up)
+            if bev_frame_annotated_down is not None:
+                cv2.imshow("BEV - Down Stream", bev_frame_annotated_down)
 
         elapsed = time.time() - loop_start
         sleep_delay = stream.get_sleep_interval(elapsed)
@@ -813,21 +873,47 @@ def main():
             print("[+] Intersection counters reset.")
         elif key in (ord("c"), ord("C")):
             # Auto-calibrate dual trapezoids
+
             res = auto_calibrate(
                 frame=frame,
-                bev_frame_down=bev_frame_down,
-                bev_frame_up=bev_frame_up,
+                store_file=(f"trajectories_{source_key}.npz")
             )
+
             (
                 coords_up,
                 coords_down,
                 num_lanes_up,
                 num_lanes_down,
-                distance_up,
-                distance_down,
-                num_dashes_up,
-                num_dashes_down,
             ) = res
+
+            # Generate perspective transforms for length calculation
+            if coords_up is not None:
+                (
+                    matrix_up,
+                    bev_frame_annotated_up,
+                    bev_frame_masked_up,
+                    bev_w_up,
+                    bev_h_up,
+                    _,
+                ) = setup_bev_transform(
+                    coords_up, display_scale, frame, masked_frame, bev_background, num_lanes_up
+                )
+                if bev_frame_masked_up is not None:
+                    distance_up = get_length(bev_frame_masked_up)
+
+            if coords_down is not None:
+                (
+                    matrix_down,
+                    bev_frame_annotated_down,
+                    bev_frame_masked_down,
+                    bev_w_down,
+                    bev_h_down,
+                    _,
+                ) = setup_bev_transform(
+                    coords_down, display_scale, frame, masked_frame, bev_background, num_lanes_down
+                )
+                if bev_frame_masked_down is not None:
+                    distance_down = get_length(bev_frame_masked_down)
 
             try:
                 with open("config.json", "r") as file:
@@ -841,14 +927,10 @@ def main():
             if coords_up is not None:
                 data[source_key]["points_up"] = coords_up.tolist()
                 data[source_key]["lanes_up"] = num_lanes_up
-                data[source_key]["distance_up"] = distance_up
-                data[source_key]["num_dashes_up"] = num_dashes_up
 
             if coords_down is not None:
                 data[source_key]["points_down"] = coords_down.tolist()
                 data[source_key]["lanes_down"] = num_lanes_down
-                data[source_key]["distance_down"] = distance_down
-                data[source_key]["num_dashes_down"] = num_dashes_down
 
             with open("config.json", "w") as file:
                 json.dump(data, file, indent=4)

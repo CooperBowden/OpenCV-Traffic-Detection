@@ -5,10 +5,9 @@ def calculate_vehicle_speed(
     bev_history: list,
     bev_height: int,
     length: int,
-    width: int,
     direction: str,
     fps: float = 30.0,
-    margin_percent: float = 0.05,
+    margin_percent: float = 0.25,
 ) -> tuple[tuple[float, float], float]:
     """Calculates real vehicle speed (MPH), velocity vector, and cardinal heading
 
