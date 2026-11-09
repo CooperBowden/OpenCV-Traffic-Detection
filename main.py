@@ -379,8 +379,8 @@ def setup_bev_transform(
     if road_coords is None or len(road_coords) != 4:
         return None, None, 0, 0, None
 
-    src_pts = np.float32(road_coords) * np.float32(display_scale)
-    tl, tr, br, bl = src_pts
+    src_pts = np.float32(road_coords)
+    tl, tr, br, bl = road_coords
 
     width_top = np.linalg.norm(tr - tl)
     width_bottom = np.linalg.norm(br - bl)
@@ -449,8 +449,8 @@ def load_camera_config(source_key: str):
         "lanes_down", cam_data.get("num_lanes_down", 3)
     )
 
-    distance_up = cam_data.get("distance_up", (0.0, 0.0))
-    distance_down = cam_data.get("distance_down", (0.0, 0.0))
+    distance_up = cam_data.get("distance_up", 0)
+    distance_down = cam_data.get("distance_down", 0)
     dash_length = cam_data.get("dash_length", 0)
 
     return (
@@ -681,7 +681,7 @@ def main():
                             direction = "none"
                             active_bev_hist = []
                             active_h = 0
-                            active_dist = (0.0, 0.0)
+                            active_dist = 0.0
 
 
                         if (
@@ -826,7 +826,7 @@ def main():
             analytics.update(active_vehicles, current_fps)
 
             # Render Dashboard and overlays
-            bev_boxes = [coords_up, coords_down]
+            bev_boxes = [src_pts_up, src_pts_down]
             annotated_frame = render_dashboard(
                 frame=frame,
                 stream=stream,
@@ -899,7 +899,7 @@ def main():
                     coords_up, display_scale, frame, masked_frame, bev_background, num_lanes_up
                 )
                 if bev_frame_masked_up is not None:
-                    distance_up = get_length(bev_frame_masked_up)
+                    distance_up = get_length(bev_frame_masked_up, display_scale=display_scale, num_lanes=num_lanes_up)
 
             if coords_down is not None:
                 (
@@ -913,7 +913,7 @@ def main():
                     coords_down, display_scale, frame, masked_frame, bev_background, num_lanes_down
                 )
                 if bev_frame_masked_down is not None:
-                    distance_down = get_length(bev_frame_masked_down)
+                    distance_down = get_length(bev_frame_masked_down, display_scale=display_scale,  num_lanes=num_lanes_down)
 
             try:
                 with open("config.json", "r") as file:

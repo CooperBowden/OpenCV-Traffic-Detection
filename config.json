@@ -7,6 +7,48 @@
         "num_lanes": 2,
         "num_dashes": 4
     },
+    "i64__mm258.5": {
+        "name": "I-64 / MM 258.5 / EB",
+        "url": "https://media-sfs4.vdotcameras.com/rtplive/HamptonRoads821/chunklist_w1440079498.m3u8",
+        "points_up": [
+            [
+                377,
+                190
+            ],
+            [
+                421,
+                190
+            ],
+            [
+                765,
+                318
+            ],
+            [
+                659,
+                318
+            ]
+        ],
+        "lanes_up": 2,
+        "points_down": [
+            [
+                230,
+                249
+            ],
+            [
+                348,
+                249
+            ],
+            [
+                818,
+                720
+            ],
+            [
+                612,
+                720
+            ]
+        ],
+        "lanes_down": 3
+    },
     "i64_mm259": {
         "name": "I-64 EB at MM 259.8 (Hampton Roads)",
         "id": "HamptonRoads819",
@@ -117,20 +159,20 @@
         "url": "datasets/highway2.mp4",
         "points_up": [
             [
-                474,
-                314
+                478,
+                316
             ],
             [
-                609,
-                314
+                604,
+                316
             ],
             [
-                551,
-                554
+                554,
+                562
             ],
             [
-                125,
-                554
+                106,
+                562
             ]
         ],
         "lanes_up": 3,
@@ -138,25 +180,67 @@
         "num_dashes_up": 4.0,
         "points_down": [
             [
-                674,
+                676,
                 344
             ],
             [
-                820,
+                817,
                 344
             ],
             [
                 1253,
-                634
+                636
             ],
             [
-                749,
-                634
+                747,
+                636
             ]
         ],
         "lanes_down": 3,
         "distance_down": 215.45454545454544,
         "num_dashes_down": 6.0
+    },
+    "i64mm250.4": {
+        "name": "I-64 / MM 250.4 / EB",
+        "url": "https://media-sfs6.vdotcameras.com/rtplive/HamptonRoads839/chunklist_w150587775.m3u8",
+        "points_up": [
+            [
+                268,
+                139
+            ],
+            [
+                304,
+                139
+            ],
+            [
+                663,
+                311
+            ],
+            [
+                569,
+                311
+            ]
+        ],
+        "lanes_up": 2,
+        "points_down": [
+            [
+                89,
+                210
+            ],
+            [
+                267,
+                210
+            ],
+            [
+                606,
+                691
+            ],
+            [
+                441,
+                691
+            ]
+        ],
+        "lanes_down": 3
     },
     "datasets/highway2.mp4": {
         "points_up": [
@@ -178,10 +262,6 @@
             ]
         ],
         "lanes_up": 3,
-        "distance_up": [
-            36.0,
-            240.0
-        ],
         "num_dashes_up": 6.0,
         "points_down": [
             [
@@ -202,10 +282,6 @@
             ]
         ],
         "lanes_down": 2,
-        "distance_down": [
-            24.0,
-            160.0
-        ],
         "num_dashes_down": 4.0
     }
 }

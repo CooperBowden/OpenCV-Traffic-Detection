@@ -721,7 +721,7 @@ def calculate_bounds(
     return bbox
 
 def get_length(
-        bev_frame: np.ndarray, num_lanes: int = 3
+        bev_frame: np.ndarray, display_scale, num_lanes: int,
 ) -> float:
     """Accurately counts painted dashes in BEV space by sampling narrow vertical
     strips along lane divider lines rather than averaging the full image width.
@@ -776,7 +776,7 @@ def get_length(
                 pt_start = (x_mid_global, y)
                 pt_end = (x_mid_global, y + bh)
                 # find distance of points and add to list
-                dash_lengths.append(math.dist(pt_start, pt_end))
+                dash_lengths.append((math.dist(pt_start, pt_end)/ display_scale))
                 # Draw single centerline per dash
                 cv2.line(
                     viz_frame,
@@ -805,7 +805,7 @@ def get_length(
     avg_length = sum(filtered_lengths) / float(len(filtered_lengths))
 
     ft_per_px = 10.0 / avg_length  # how many feet per pixel of the frame
-    frame_length_px = bev_frame.shape[:2][0]
+    frame_length_px = bev_frame.shape[:2][0]/display_scale
     frame_length_ft = frame_length_px * ft_per_px  # length of frame in feet
 
     cv2.imshow("frame with lanes", viz_frame)
