@@ -19,7 +19,7 @@ import cv2
 import numpy as np
 
 # Preset Traffic Cameras
-with open("config.json", "r") as file:
+with open("../config.json", "r") as file:
     PRESET_CAMERAS = json.load(file)
 
 

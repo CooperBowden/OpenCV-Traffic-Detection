@@ -1,4 +1,10 @@
-import argparse
+"""Vehicle identification and speed estimation using CCTV cameras
+
+Author: Cooper Bowden
+Date: 2026-11-14
+Version: 1.0.0
+"""
+
 import configparser
 import json
 import os
@@ -11,10 +17,9 @@ import cv2
 import numpy as np
 from ultralytics import YOLO
 
-from calculate_motion_stats import calculate_vehicle_speed
+from calculate_motion_stats import calculate_vehicle_speed, estimate_bev_length
 from calibrate import (
     auto_calibrate,
-    get_length,
     update_master_trajectory_store,
 )
 from cctv_stream import CCTVStream
@@ -425,7 +430,7 @@ def setup_bev_transform(
 def load_camera_config(source_key: str):
     """Helper to safely load camera calibration config from config.json."""
     try:
-        with open("config.json", "r") as file:
+        with open("../config.json", "r") as file:
             data = json.load(file)
     except FileNotFoundError:
         data = {}
@@ -466,7 +471,7 @@ def load_camera_config(source_key: str):
 
 def main():
     config = configparser.ConfigParser()
-    config.read("settings.ini")
+    config.read("../settings.ini")
     font = cv2.FONT_HERSHEY_SIMPLEX
 
     source_key = config["gui"]["source"]
@@ -899,7 +904,7 @@ def main():
                     coords_up, display_scale, frame, masked_frame, bev_background, num_lanes_up
                 )
                 if bev_frame_masked_up is not None:
-                    distance_up = get_length(bev_frame_masked_up, display_scale=display_scale, num_lanes=num_lanes_up)
+                    distance_up = estimate_bev_length(bev_frame_masked_up, display_scale=display_scale, num_lanes=num_lanes_up)
 
             if coords_down is not None:
                 (
@@ -913,10 +918,10 @@ def main():
                     coords_down, display_scale, frame, masked_frame, bev_background, num_lanes_down
                 )
                 if bev_frame_masked_down is not None:
-                    distance_down = get_length(bev_frame_masked_down, display_scale=display_scale,  num_lanes=num_lanes_down)
+                    distance_down = estimate_bev_length(bev_frame_masked_down, display_scale=display_scale,  num_lanes=num_lanes_down)
 
             try:
-                with open("config.json", "r") as file:
+                with open("../config.json", "r") as file:
                     data = json.load(file)
             except FileNotFoundError:
                 data = {}
@@ -932,7 +937,7 @@ def main():
                 data[source_key]["points_down"] = coords_down.tolist()
                 data[source_key]["lanes_down"] = num_lanes_down
 
-            with open("config.json", "w") as file:
+            with open("../config.json", "w") as file:
                 json.dump(data, file, indent=4)
 
             print("[+] Auto-calibrated both BEV directions successfully.")

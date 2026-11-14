@@ -116,180 +116,16 @@ def _combine_arrays(hist: np.ndarray, curr: np.ndarray) -> np.ndarray:
         return np.vstack((hist, curr))
     return curr if len(curr) > 0 else hist
 
-def calibrate(
-    frame: np.ndarray,
-    camera: str,
-    scale: float,
-):
-    def trackbar_event(val):
-        pass
-
-    def redraw():
-        """Redraws all points and connecting lines on a fresh frame copy."""
-        nonlocal frame_display
-        frame_display = frame.copy()
-
-        num_pts = len(clicked_points)
-        if num_pts == 0:
-            return
-
-        # 1. Draw lines connecting consecutive points
-        for i in range(num_pts - 1):
-            pt1 = tuple((clicked_points[i] * scale).astype(int))
-            pt2 = tuple((clicked_points[i + 1] * scale).astype(int))
-            cv2.line(frame_display, pt1, pt2, (255, 0, 0), 1, cv2.LINE_AA)
-
-        # 2. Close the box if all 4 points are set
-        if num_pts == 4:
-            pt_first = tuple((clicked_points[0] * scale).astype(int))
-            pt_last = tuple((clicked_points[3] * scale).astype(int))
-            cv2.line(
-                frame_display, pt_last, pt_first, (255, 0, 0), 1, cv2.LINE_AA
-            )
-
-        # 3. Draw circles and text labels for every point
-        for i, pt in enumerate(clicked_points):
-            px, py = int(pt[0] * scale), int(pt[1] * scale)
-            # cv2.circle(frame_display, (px, py), 5, (0, 0, 255), -1)
-            cv2.drawMarker(frame_display, (px, py), (0, 0, 255), cv2.LINE_AA)
-            # cv2.putText(
-            #     frame_display,
-            #     f"P{i + 1}: ({px}, {py})",
-            #     (px + 10, py - 10),
-            #     cv2.FONT_HERSHEY_SIMPLEX,
-            #     0.5,
-            #     (0, 255, 0),
-            #     2,
-            # )
-
-    def click_event(event, x, y, flags, param):
-        """Callback function to handle mouse clicks on the video frame."""
-        nonlocal clicked_points
-        if event == cv2.EVENT_LBUTTONDOWN:
-            new_point = np.array([int(x / scale), int(y / scale)])
-
-            if len(clicked_points) == 4:
-                # Compute Euclidean distances and replace closest point
-                distances_sq = np.sum((clicked_points - new_point) ** 2, axis=1)
-                closest_idx = np.argmin(distances_sq)
-                clicked_points[closest_idx] = new_point
-            else:
-                # Append new point
-                if len(clicked_points) == 0:
-                    clicked_points = new_point.reshape(1, 2)
-                else:
-                    clicked_points = np.vstack([clicked_points, new_point])
-
-            redraw()
-
-    try:
-        with open("config.json", "r") as file:
-            data = json.load(file)
-    except FileNotFoundError:
-        data = {}
-
-    if camera not in data:
-        data[camera] = {}
-
-    # Initialize clicked_points array
-    clicked_points = np.empty((0, 2), dtype=int)
-
-    # Base frame copy for drawing
-    frame_display = frame.copy()
-
-    # Setup the OpenCV Window and Mouse Callback
-    cv2.namedWindow("Select 4 Ground Points")
-    cv2.setMouseCallback("Select 4 Ground Points", click_event)
-    try:
-        with open("config.json", "r") as file:
-            data = json.load(file)
-    except FileNotFoundError:
-        data = {}
-    # Trackbars
-    cv2.createTrackbar(
-        "Number of lanes", "Select 4 Ground Points", data[camera]["num_lanes"], 5, trackbar_event
-    )
-    cv2.createTrackbar(
-        "Number of dashes", "Select 4 Ground Points", data[camera]["num_lanes"], 10, trackbar_event
-    )
-
-    print("INSTRUCTIONS:")
-    print("Click 4 points on the ground plane in CLOCKWISE order:")
-    print(
-        "1. Top-Left  ->  2. Top-Right  ->  3. Bottom-Right  ->  4. Bottom-Left"
-    )
-    print("Clicking a 5th time replaces the closest point.")
-    print("Press 'r' to reset points. Press 's' to save. Press 'q' to quit.")
-
-    # Calibration loop
-    while True:
-        display_frame = frame_display.copy()
-
-        num_lanes = cv2.getTrackbarPos(
-            "Number of lanes", "Select 4 Ground Points"
-        )
-        num_dashes = cv2.getTrackbarPos(
-            "Number of dashes", "Select 4 Ground Points"
-        )
-
-        # Draw trackbar info overlay (split across lines since cv2.putText doesn't handle \n)
-        cv2.putText(
-            display_frame,
-            f"Number of lanes: {num_lanes}",
-            (30, 30),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.6,
-            (0, 255, 0),
-            2,
-        )
-        cv2.putText(
-            display_frame,
-            f"Number of dashes: {num_dashes}",
-            (30, 60),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.6,
-            (0, 255, 0),
-            2,
-        )
-
-        cv2.imshow("Select 4 Ground Points", display_frame)
-        key = cv2.waitKey(30) & 0xFF
-
-        # Reset choices
-        if key == ord("r"):
-            clicked_points = np.empty((0, 2), dtype=int)
-            redraw()
-            print("Points reset. Start over from Top-Left.")
-
-        # Quit without saving
-        if key == ord("q"):
-            cv2.destroyWindow("Select 4 Ground Points")
-            return None
-
-        # Save configuration
-        if key == ord("s"):
-            if len(clicked_points) < 4:
-                print("Please select 4 points before saving.")
-                continue
-
-            print("Points saved:")
-            print(f"src_pts = np.float32(\n{np.float32(clicked_points)}\n)")
-
-            data[camera]["points"] = clicked_points.tolist()
-            data[camera]["num_lanes"] = num_lanes
-            data[camera]["num_dashes"] = num_dashes
-
-            with open("config.json", "w") as file:
-                json.dump(data, file, indent=4)
-
-            cv2.destroyWindow("Select 4 Ground Points")
-            return clicked_points, num_lanes, num_dashes
-
-
 def auto_calibrate(
     frame: np.ndarray,
     store_file="trajectories_store.npz"
 ):
+    """master function to calculate and return a BEV frame aligned to the road lines
+
+    :param frame: cv2 frame object of highway
+    :param store_file: file to store point cloud
+    :return: lane coordinates and number of lanes both up and down
+    """
     if not os.path.exists(store_file):
         print(f"[!] Store file '{store_file}' not found.")
         return None, None
@@ -302,11 +138,13 @@ def auto_calibrate(
     filter_down = filter_pts(down_pts)
     point_cloud = plot_point_cloud_on_frame(frame=frame.copy(), radius=1, pts_up=filter_up, pts_down=filter_down)
     cv2.imshow("point cloud", point_cloud)
+    cv2.imwrite("../screenshots/point_cloud.png", point_cloud)
     print("filter up points: " + (str) (len(up_pts) - len(filter_up)))
     print("filter down points: " + (str) (len(down_pts) - len(filter_down)))
-    lines_up, lane_lines_up, num_lanes_up  = plot_lane_peaks(frame=frame, pts=filter_up)
-    lines_down, lane_lines_down, num_lanes_down = plot_lane_peaks(frame=lines_up, pts=filter_down)
-    cv2.imshow("traffic peaks", lines_down)
+    annotated_up, lane_lines_up, num_lanes_up  = plot_lane_peaks(frame=frame, pts=filter_up)
+    annotated_down, lane_lines_down, num_lanes_down = plot_lane_peaks(frame=annotated_up, pts=filter_down)
+    cv2.imshow("traffic peaks down", annotated_down)
+    cv2.imwrite('../screenshots/traffic_peaks.png', annotated_down)
     coords_up = calculate_bounds(lane_lines_up)
     coords_down = calculate_bounds(lane_lines_down)
     return coords_up, coords_down, num_lanes_up, num_lanes_down
@@ -316,8 +154,9 @@ def detect_num_lanes(
     num_slices: int = 8,
     prominence_ratio: float = 0.05,
 ) -> int:
-    """Detects active lane count by running peak detection across multiple thin horizontal
+    """calcuulates the number of lanes
 
+    Detects active lane count by running peak detection on the vehicle point cloud across multiple thin horizontal
     slices to eliminate perspective slant smearing.
     """
     if pts is None or len(pts) < 15:
@@ -396,7 +235,8 @@ def detect_num_lanes(
 
 
 def filter_pts(pts, radius=5, min_neighbors=5, factor: float = 1.0):
-    """
+    """cleans the point cloud by removing outlier points
+
     pts (np.ndarray): Point cloud array of shape (N, 2) where column 0 is X and column 1 is Y.
     radius (int): Radius of neighboring points.
     min_neighbors (int): Minimum number of neighboring points.
@@ -663,8 +503,7 @@ def calculate_bounds(
     """Creates a 4-corner perspective road bounding box directly from drawn line endpoints.
 
     Parameters:
-        drawn_lines (list): List of line tuples [((x_top1, y_top1), (x_bot1,
-          y_bot1)), ...]
+        drawn_lines (list): List of line tuples
         padding_factor (float): Outward padding multiplier (1.0 = 0.5 * lane_width per side).
 
     Returns:
@@ -720,99 +559,6 @@ def calculate_bounds(
 
     return bbox
 
-def get_length(
-        bev_frame: np.ndarray, display_scale, num_lanes: int,
-) -> float:
-    """Accurately counts painted dashes in BEV space by sampling narrow vertical
-    strips along lane divider lines rather than averaging the full image width.
-    Uses masked BEV frame to remove vehicles to isolate dashes
-    """
-    if bev_frame is None or bev_frame.size == 0:
-        return 3.0
-
-    if len(bev_frame.shape) == 3:
-        gray = cv2.cvtColor(bev_frame, cv2.COLOR_BGR2GRAY)
-        viz_frame = bev_frame.copy()
-    else:
-        gray = bev_frame.copy()
-        viz_frame = cv2.cvtColor(bev_frame, cv2.COLOR_GRAY2BGR)
-
-    h, w = gray.shape[:2]
-
-    # 1. Thresholding to isolate bright white road paint
-    _, binary = cv2.threshold(gray, 130, 255, cv2.THRESH_BINARY)
-
-    # Vertical opening to eliminate horizontal noise/reflections
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 7))
-    binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel)
-
-    # 2. Locate isolated lane divider X positions
-    lane_width_px = w / float(num_lanes)
-    divider_x_positions = [int(i * lane_width_px) for i in range(1, num_lanes)]
-    if not divider_x_positions:
-        divider_x_positions = [int(w / 2.0)]
-
-    strip_w = 30  # Half-width of vertical strip around divider line
-    dash_lengths = []
-
-    for div_x in divider_x_positions:
-        x_start = max(0, div_x - strip_w)
-        x_end = min(w, div_x + strip_w)
-
-        # Slice narrow isolated vertical strip along the divider line
-        strip = binary[:, x_start:x_end]
-
-        # Extract contours within this specific lane segment
-        contours, _ = cv2.findContours(
-            strip, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
-        )
-
-        for cnt in contours:
-            x, y, bw, bh = cv2.boundingRect(cnt)
-            # Filter for vertically elongated dashes (height >= 10px, height > width)
-            if bh >= 10 and bh > bw and bw <= 35:
-                # Map local strip coordinates back to global BEV frame coordinates
-                x_mid_global = x_start + x + (bw // 2)
-                pt_start = (x_mid_global, y)
-                pt_end = (x_mid_global, y + bh)
-                # find distance of points and add to list
-                dash_lengths.append((math.dist(pt_start, pt_end)/ display_scale))
-                # Draw single centerline per dash
-                cv2.line(
-                    viz_frame,
-                    pt_start,
-                    pt_end,
-                    (0, 255, 0),
-                    2,
-                    lineType=cv2.LINE_AA,
-                )
-    # return 0 if can't calculate
-    if (len(dash_lengths) == 0):
-        return 0
-
-    # filter outliers/clipped dashes
-    def remove_outliers_iqr(list):
-        q1 = np.percentile(list, 25)
-        q3 = np.percentile(list, 75)
-        iqr = q3 - q1
-
-        lower_bound = q1 - 1.5 * iqr
-        upper_bound = q3 + 1.5 * iqr
-
-        # Filter the list
-        return [x for x in list if lower_bound <= x <= upper_bound]
-    filtered_lengths = remove_outliers_iqr(dash_lengths)
-    avg_length = sum(filtered_lengths) / float(len(filtered_lengths))
-
-    ft_per_px = 10.0 / avg_length  # how many feet per pixel of the frame
-    frame_length_px = bev_frame.shape[:2][0]/display_scale
-    frame_length_ft = frame_length_px * ft_per_px  # length of frame in feet
-
-    cv2.imshow("frame with lanes", viz_frame)
-    # cv2.waitKey(0)
-    # cv2.destroyAllWindows()
-    print(f"Estimated length: {frame_length_ft:.2f}ft")
-    return frame_length_ft
 
 def plot_point_cloud_on_frame(
     frame: np.ndarray,
