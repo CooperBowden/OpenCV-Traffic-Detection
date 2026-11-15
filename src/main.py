@@ -70,7 +70,7 @@ class highway_analytics:
 
     def __init__(self):
         self.seen_vehicles = set()
-        self.speed_history = deque(maxlen=60)
+        self.recorded_speeds = set()  # Track which IDs have already been averaged
         self.speed_history_up = deque(maxlen=60)
         self.speed_history_down = deque(maxlen=60)
         self.fps_history = deque(maxlen=30)
@@ -78,13 +78,20 @@ class highway_analytics:
 
     def update(self, active_vehicles: List[dict], fps: float):
         for v in active_vehicles:
+            tid = v["id"]
+            self.seen_vehicles.add(tid)
 
-            self.seen_vehicles.add(v["id"])
-            if v["speed"] is not None and v["speed"] >= 0.6:
+            if (
+                    tid not in self.recorded_speeds
+                    and v["speed"] is not None
+                    and v["speed"] >= 0.6
+            ):
                 if v["direction"] == "up":
                     self.speed_history_up.append(v["speed"])
-                if v["direction"] == "down":
+                    self.recorded_speeds.add(tid)
+                elif v["direction"] == "down":
                     self.speed_history_down.append(v["speed"])
+                    self.recorded_speeds.add(tid)
 
         if fps > 0:
             self.fps_history.append(fps)
@@ -122,7 +129,9 @@ class highway_analytics:
 
     def reset(self):
         self.seen_vehicles.clear()
-        self.speed_history.clear()
+        self.recorded_speeds.clear()
+        self.speed_history_up.clear()
+        self.speed_history_down.clear()
         self.start_time = time.time()
 
 
@@ -665,7 +674,7 @@ def main():
 
                     # Speed calculation using real-world distances
                     if track_id in vehicle_speeds:
-                        speed = vehicle_speeds[track_id]
+                        speed, direction = vehicle_speeds[track_id]
                         velocity = (0.0, 0.0)
                     else:
                         if in_up:
@@ -707,15 +716,15 @@ def main():
                         # Flag when vehicle speed is 120% greater than average
                         if speed is not None:
                             print(f"#{track_id} {direction} speed: {speed:.2f} MPH")
-                            vehicle_speeds[track_id] = speed
+                            vehicle_speeds[track_id] = (speed, direction)
                             if (direction == "up"):
                                 avg_speed = analytics.average_vehicle_speed_up
                             if (direction == "down"):
                                 avg_speed = analytics.average_vehicle_speed_down
                             if (speed > (avg_speed * 1.20) and avg_speed != 0):
-                                print(f"*High speed Detected [{track_id} {direction}]: {speed:.2f} MPH - "
-                                      f"{(speed/avg_speed)*100:.1}% faster than average "
-                                      f"({avg_speed} MPH)")
+                                print(f"* High speed Detected * [{track_id} {direction}]: {speed:.2f} MPH -> "
+                                      f"{(speed/avg_speed)*100:.1f}% faster than average "
+                                      f"({avg_speed:.2f} MPH)")
 
 
                     cls_label = ALL_TARGET_CLASSES.get(
@@ -815,7 +824,7 @@ def main():
                 if tid not in current_active_ids:
                     del vehicle_speeds[tid]
 
-            update_master_trajectory_store(track_history, store_file=(f"trajectories_{source_key}.npz"))
+            update_master_trajectory_store(track_history, store_file=(f"../datasets/trajectories_{source_key}.npz"))
 
             # FPS counter
             now = time.time()
@@ -878,12 +887,13 @@ def main():
             print("[+] Intersection counters reset.")
         elif key in (ord("c"), ord("C")):
             # Auto-calibrate dual trapezoids
+            cv2.imwrite("../screenshots/frame.png", frame)
+            cv2.imwrite("../screenshots/annotated_frame.png", annotated_frame)
 
             res = auto_calibrate(
                 frame=frame,
-                store_file=(f"trajectories_{source_key}.npz")
+                store_file=(f"../datasets/trajectories_{source_key}.npz")
             )
-
             (
                 coords_up,
                 coords_down,
@@ -893,6 +903,7 @@ def main():
 
             # Generate perspective transforms for length calculation
             if coords_up is not None:
+                cv2.imwrite("../screenshots/bev_frame_annotated_up.png", bev_frame_annotated_up)
                 (
                     matrix_up,
                     bev_frame_annotated_up,
@@ -905,8 +916,10 @@ def main():
                 )
                 if bev_frame_masked_up is not None:
                     distance_up = estimate_bev_length(bev_frame_masked_up, display_scale=display_scale, num_lanes=num_lanes_up)
+                    cv2.imwrite("../screenshots/bev_frame_masked_up.png", bev_frame_masked_up)
 
             if coords_down is not None:
+                cv2.imwrite("../screenshots/bev_frame_annotated_down.png", bev_frame_annotated_down)
                 (
                     matrix_down,
                     bev_frame_annotated_down,
@@ -919,6 +932,7 @@ def main():
                 )
                 if bev_frame_masked_down is not None:
                     distance_down = estimate_bev_length(bev_frame_masked_down, display_scale=display_scale,  num_lanes=num_lanes_down)
+                    cv2.imwrite("../screenshots/bev_frame_masked_down.png", bev_frame_masked_down)
 
             try:
                 with open("../config.json", "r") as file:
