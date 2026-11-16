@@ -148,7 +148,7 @@ def estimate_bev_length(
 
         # Slice narrow isolated vertical strip along the divider line
         strip = binary[:, x_start:x_end]
-
+        cv2.imwrite("../screenshots/dash_strip.png", strip)
         # Extract contours within this specific lane segment
         contours, _ = cv2.findContours(
             strip, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE

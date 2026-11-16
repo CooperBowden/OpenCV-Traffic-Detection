@@ -154,7 +154,7 @@ def detect_num_lanes(
     num_slices: int = 8,
     prominence_ratio: float = 0.05,
 ) -> int:
-    """calcuulates the number of lanes
+    """calculates the number of lanes
 
     Detects active lane count by running peak detection on the vehicle point cloud across multiple thin horizontal
     slices to eliminate perspective slant smearing.
@@ -415,87 +415,6 @@ def plot_lane_peaks(
         )
 
     return annotated, lane_lines, num_lanes
-
-def extract_lane_boundaries_from_band(
-    band_pts, num_lanes=3, x_min_clip=0, x_max_clip=1920
-):
-    """Extracts mathematically stable lane boundary X-coordinates (valleys & outer edges)
-
-    from a 2D point cloud band without width inflation or outlier distortions.
-    """
-    if band_pts is None or len(band_pts) == 0:
-        return None
-
-    # 1. Filter extreme horizontal outliers (e.g., tracking errors on shoulders)
-    x_raw = band_pts[:, 0]
-    p_low, p_high = np.percentile(x_raw, [1.0, 99.0])
-    valid_mask = (x_raw >= p_low) & (x_raw <= p_high)
-    x_coords = x_raw[valid_mask]
-
-    if len(x_coords) < 10:
-        x_coords = x_raw
-
-    # 2. Build 1D histogram over the filtered horizontal span
-    x_min, x_max = np.min(x_coords), np.max(x_coords)
-    span = int(x_max - x_min)
-    if span <= 10:
-        return None
-
-    num_bins = min(span, 500)
-    hist, bin_edges = np.histogram(x_coords, bins=num_bins, range=(x_min, x_max))
-    bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2.0
-
-    # Smooth histogram with Gaussian filter
-    smoothed = gaussian_filter1d(hist.astype(np.float32), sigma=5.0)
-
-    # 3. Detect Peaks (Lane Centers)
-    min_dist = max(num_bins / (num_lanes * 2.5), 5.0)
-    peak_indices, properties = find_peaks(
-        smoothed, distance=min_dist, prominence=np.max(smoothed) * 0.05
-    )
-
-    if len(peak_indices) >= num_lanes:
-        # Select the 'num_lanes' MOST PROMINENT peaks (filters out shoulder noise)
-        prominences = properties["prominences"]
-        top_indices = np.argsort(prominences)[-num_lanes:]
-        peaks = sorted(bin_centers[peak_indices[top_indices]])
-    else:
-        # Fallback: Estimate lane centers from percentile span
-        p_first = np.percentile(x_coords, 5)
-        p_last = np.percentile(x_coords, 95)
-        peaks = np.linspace(p_first, p_last, num_lanes)
-
-    # 4. Calculate robust average pixel width per lane
-    if num_lanes > 1:
-        avg_lane_w = (peaks[-1] - peaks[0]) / (num_lanes - 1)
-    else:
-        avg_lane_w = span
-
-    # 5. Locate internal valleys (lane dividers) or fall back to midpoints
-    valleys = []
-    for i in range(num_lanes - 1):
-        p1, p2 = peaks[i], peaks[i + 1]
-        mask = (bin_centers >= p1) & (bin_centers <= p2)
-        if np.any(mask):
-            segment = smoothed[mask]
-            seg_centers = bin_centers[mask]
-            valleys.append(seg_centers[np.argmin(segment)])
-        else:
-            valleys.append((p1 + p2) / 2.0)
-
-    # 6. Set outer boundaries using exactly 0.5 * avg_lane_w outward push
-    b_left = peaks[0] - 0.5 * avg_lane_w
-    b_right = peaks[-1] + 0.5 * avg_lane_w
-
-    # Assemble ordered boundary vector [B0, V1, V2, ..., BN]
-    boundaries = [int(b_left)] + [int(v) for v in valleys] + [int(b_right)]
-
-    # Clip boundaries to image dimensions
-    boundaries = [
-        int(max(x_min_clip, min(x_max_clip, b))) for b in boundaries
-    ]
-    return boundaries
-
 
 def calculate_bounds(
     drawn_lines: list, padding_factor: float = 1.0
