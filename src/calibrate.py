@@ -118,7 +118,8 @@ def _combine_arrays(hist: np.ndarray, curr: np.ndarray) -> np.ndarray:
 
 def auto_calibrate(
     frame: np.ndarray,
-    store_file="trajectories_store.npz"
+    store_file="trajectories_store.npz",
+    save_images: bool = False
 ):
     """master function to calculate and return a BEV frame aligned to the road lines
 
@@ -137,13 +138,11 @@ def auto_calibrate(
     filter_up = filter_pts(up_pts)
     filter_down = filter_pts(down_pts)
     point_cloud = plot_point_cloud_on_frame(frame=frame.copy(), radius=1, pts_up=filter_up, pts_down=filter_down)
-    cv2.imshow("point cloud", point_cloud)
-    cv2.imwrite("../screenshots/point_cloud.png", point_cloud)
+    if (save_images == True): cv2.imwrite("../screenshots/point_cloud.png", point_cloud)
     print("filter up points: " + (str) (len(up_pts) - len(filter_up)))
     print("filter down points: " + (str) (len(down_pts) - len(filter_down)))
     annotated_up, lane_lines_up, num_lanes_up  = plot_lane_peaks(frame=frame, pts=filter_up)
     annotated_down, lane_lines_down, num_lanes_down = plot_lane_peaks(frame=annotated_up, pts=filter_down)
-    cv2.imshow("traffic peaks down", annotated_down)
     cv2.imwrite('../screenshots/traffic_peaks.png', annotated_down)
     coords_up = calculate_bounds(lane_lines_up)
     coords_down = calculate_bounds(lane_lines_down)

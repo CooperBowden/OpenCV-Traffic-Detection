@@ -99,7 +99,7 @@ def calculate_vehicle_speed(
     return (vx_mph, vy_mph), speed_mph
 
 def estimate_bev_length(
-        bev_frame: np.ndarray, display_scale, num_lanes: int,
+        bev_frame: np.ndarray, display_scale, num_lanes: int, save_images: bool = False
 ) -> float:
     """Estimate length of frame
 
@@ -195,8 +195,7 @@ def estimate_bev_length(
     frame_length_px = bev_frame.shape[:2][0]/display_scale
     frame_length_ft = frame_length_px * ft_per_px  # length of frame in feet
 
-    cv2.imshow("frame with lanes", viz_frame)
-    cv2.imwrite("../screenshots/dash_length_estimation.png", viz_frame)
+    if (save_images == True): cv2.imwrite("../screenshots/dash_length_estimation.png", viz_frame)
     # cv2.waitKey(0)
     # cv2.destroyAllWindows()
     print(f"Estimated length: {frame_length_ft:.2f}ft")

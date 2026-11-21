@@ -367,7 +367,8 @@ def render_dashboard(
         alpha=0.75,
         border_color=(40, 50, 60),
     )
-    controls_text = "[SPACE] Pause/Resume   [H] Toggle HUD   [T] Toggle Trails   [R] Reset Counters   [Q] Quit   [C] Calibrate   [B] Toggle BEV"
+    controls_text = ("[SPACE] Pause/Resume   [H] Toggle HUD   [T] Toggle Trails   [R] Reset Counters   [Q] Quit   "
+                     "[C] Calibrate   [B] Toggle BEV")
     cv2.putText(
         annotated,
         controls_text,
@@ -484,11 +485,12 @@ def main():
     font = cv2.FONT_HERSHEY_SIMPLEX
 
     source_key = config["gui"]["source"]
+    save_images = config["gui"]["save-images"]
     print(f"[*] Initializing stream from: {source_key}")
     stream = CCTVStream(source_key)
 
     print(f"[*] Loading YOLO tracking model: {config['model']['model']}")
-    model = YOLO(config["model"]["model"])
+    model = YOLO("models/" + config["model"]["model"])
 
     ret, frame = stream.read()
     if not ret or frame is None:
@@ -824,7 +826,7 @@ def main():
                 if tid not in current_active_ids:
                     del vehicle_speeds[tid]
 
-            update_master_trajectory_store(track_history, store_file=(f"../datasets/trajectories_{source_key}.npz"))
+            update_master_trajectory_store(track_history, store_file=(f"../point_clouds/trajectories_{source_key}.npz"))
 
             # FPS counter
             now = time.time()
@@ -887,12 +889,14 @@ def main():
             print("[+] Intersection counters reset.")
         elif key in (ord("c"), ord("C")):
             # Auto-calibrate dual trapezoids
-            cv2.imwrite("../screenshots/frame.png", frame)
-            cv2.imwrite("../screenshots/annotated_frame.png", annotated_frame)
+            if (save_images == True):
+                cv2.imwrite("../screenshots/frame.png", frame)
+                cv2.imwrite("../screenshots/annotated_frame.png", annotated_frame)
 
             res = auto_calibrate(
                 frame=frame,
-                store_file=(f"../datasets/trajectories_{source_key}.npz")
+                store_file=(f"../point_clouds/trajectories_{source_key}.npz"),
+                save_images=save_images
             )
             (
                 coords_up,
@@ -903,7 +907,8 @@ def main():
 
             # Generate perspective transforms for length calculation
             if coords_up is not None:
-                cv2.imwrite("../screenshots/bev_frame_annotated_up.png", bev_frame_annotated_up)
+                if (save_images == True): cv2.imwrite(
+                    "../screenshots/bev_frame_annotated_up.png", bev_frame_annotated_up)
                 (
                     matrix_up,
                     bev_frame_annotated_up,
@@ -915,11 +920,17 @@ def main():
                     coords_up, display_scale, frame, masked_frame, bev_background, num_lanes_up
                 )
                 if bev_frame_masked_up is not None:
-                    distance_up = estimate_bev_length(bev_frame_masked_up, display_scale=display_scale, num_lanes=num_lanes_up)
-                    cv2.imwrite("../screenshots/bev_frame_masked_up.png", bev_frame_masked_up)
+                    distance_up = estimate_bev_length(
+                        bev_frame_masked_up,
+                        display_scale=display_scale,
+                        num_lanes=num_lanes_up,
+                        save_images=save_images)
+                    if (save_images == True): cv2.imwrite(
+                        "../screenshots/bev_frame_masked_up.png", bev_frame_masked_up)
 
             if coords_down is not None:
-                cv2.imwrite("../screenshots/bev_frame_annotated_down.png", bev_frame_annotated_down)
+                if (save_images == True): cv2.imwrite(
+                    "../screenshots/bev_frame_annotated_down.png", bev_frame_annotated_down)
                 (
                     matrix_down,
                     bev_frame_annotated_down,
@@ -931,8 +942,12 @@ def main():
                     coords_down, display_scale, frame, masked_frame, bev_background, num_lanes_down
                 )
                 if bev_frame_masked_down is not None:
-                    distance_down = estimate_bev_length(bev_frame_masked_down, display_scale=display_scale,  num_lanes=num_lanes_down)
-                    cv2.imwrite("../screenshots/bev_frame_masked_down.png", bev_frame_masked_down)
+                    distance_down = estimate_bev_length(
+                        bev_frame_masked_down,
+                        display_scale=display_scale,
+                        num_lanes=num_lanes_down)
+                    if (save_images == True): cv2.imwrite(
+                        "../screenshots/bev_frame_masked_down.png", bev_frame_masked_down)
 
             try:
                 with open("../config.json", "r") as file:
