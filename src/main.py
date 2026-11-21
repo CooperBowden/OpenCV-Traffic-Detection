@@ -490,7 +490,7 @@ def main():
     stream = CCTVStream(source_key)
 
     print(f"[*] Loading YOLO tracking model: {config['model']['model']}")
-    model = YOLO("models/" + config["model"]["model"])
+    model = YOLO("../models/" + config["model"]["model"])
 
     ret, frame = stream.read()
     if not ret or frame is None:
