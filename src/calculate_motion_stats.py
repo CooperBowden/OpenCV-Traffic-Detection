@@ -1,6 +1,7 @@
 import numpy as np
 import cv2
 import math
+import os
 
 def calculate_vehicle_speed(
     bev_history: list,
@@ -114,6 +115,7 @@ def estimate_bev_length(
     return:
         float: real world length of bev frame in feet
     """
+    basepath = os.path.dirname(__file__)
     if bev_frame is None or bev_frame.size == 0:
         return 3.0
 
@@ -148,7 +150,7 @@ def estimate_bev_length(
 
         # Slice narrow isolated vertical strip along the divider line
         strip = binary[:, x_start:x_end]
-        cv2.imwrite("../screenshots/dash_strip.png", strip)
+        cv2.imwrite(os.path.abspath(os.path.join(basepath, "..", "screenshots", "dash_strip.png")), strip)
         # Extract contours within this specific lane segment
         contours, _ = cv2.findContours(
             strip, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
@@ -195,8 +197,8 @@ def estimate_bev_length(
     frame_length_px = bev_frame.shape[:2][0]/display_scale
     frame_length_ft = frame_length_px * ft_per_px  # length of frame in feet
 
-    if (save_images == True): cv2.imwrite("../screenshots/dash_length_estimation.png", viz_frame)
+    if (save_images == True): cv2.imwrite(os.path.abspath(os.path.join(basepath, "..", "screenshots",
+                                                                       "dash_length_estimation.png")), viz_frame)
     # cv2.waitKey(0)
     # cv2.destroyAllWindows()
-    print(f"Estimated length: {frame_length_ft:.2f}ft")
     return frame_length_ft

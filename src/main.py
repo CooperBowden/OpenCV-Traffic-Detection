@@ -494,6 +494,7 @@ def main():
 
     source_key = config["gui"]["source"]
     save_images = config.getboolean("gui", "save-images")
+    print(save_images)
     flag_speed = config.getfloat("gui", "flag-speed")
     print(f"[*] Initializing stream from: {source_key}")
     stream = CCTVStream(source_key)
@@ -901,8 +902,10 @@ def main():
         elif key in (ord("c"), ord("C")):
             # Auto-calibrate dual trapezoids
             if (save_images == True):
-                cv2.imwrite(os.path.abspath(os.path.join(basepath, "..", "frame.png")), frame)
-                cv2.imwrite(os.path.abspath(os.path.join(basepath, "..", "annotated_frame.png")), annotated_frame)
+                cv2.imwrite(os.path.abspath(os.path.join(basepath, "..", "screenshots", "frame.png")),
+                            frame)
+                cv2.imwrite(os.path.abspath(os.path.join(basepath, "..", "screenshots", "annotated_frame.png")),
+                            annotated_frame)
 
             res = auto_calibrate(
                 frame=frame,
@@ -919,7 +922,8 @@ def main():
             # Generate perspective transforms for length calculation
             if coords_up is not None:
                 if (save_images == True): cv2.imwrite(
-                    os.path.abspath(os.path.join(basepath, "..", "bev_frame_annotated_up.png")), bev_frame_annotated_up)
+                    os.path.abspath(os.path.join(basepath, "..", "screenshots", "bev_frame_annotated_up.png"))
+                    , bev_frame_annotated_up)
                 (
                     matrix_up,
                     bev_frame_annotated_up,
@@ -936,12 +940,16 @@ def main():
                         display_scale=display_scale,
                         num_lanes=num_lanes_up,
                         save_images=save_images)
+                    print(f"Estimated length up: {distance_up:.2f}ft")
+
                     if (save_images == True): cv2.imwrite(
-                        os.path.abspath(os.path.join(basepath, "..", "bev_frame_masked_up.png")), bev_frame_masked_up)
+                        os.path.abspath(os.path.join(basepath, "..", "screenshots", "bev_frame_masked_up.png")),
+                        bev_frame_masked_up)
 
             if coords_down is not None:
                 if (save_images == True): cv2.imwrite(
-                    os.path.abspath(os.path.join(basepath, "..", "bev_frame_annotated_down.png")), bev_frame_annotated_down)
+                    os.path.abspath(os.path.join(basepath, "..", "screenshots", "bev_frame_annotated_down.png")),
+                    bev_frame_annotated_down)
                 (
                     matrix_down,
                     bev_frame_annotated_down,
@@ -957,8 +965,10 @@ def main():
                         bev_frame_masked_down,
                         display_scale=display_scale,
                         num_lanes=num_lanes_down)
+                    print(f"Estimated length down: {distance_down:.2f}ft")
                     if (save_images == True): cv2.imwrite(
-                        os.path.abspath(os.path.join(basepath, "..", "bev_frame_masked_down.png")), bev_frame_masked_down)
+                        os.path.abspath(os.path.join(basepath, "..", "screenshots", "bev_frame_masked_down.png")),
+                        bev_frame_masked_down)
 
             try:
                 with open("../config.json", "r") as file:
