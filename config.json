@@ -156,7 +156,7 @@
     },
     "highway2.mp4": {
         "name": "local highway mp4 2",
-        "url": "../datasets/highway2.mp4",
+        "url": "datasets/highway2.mp4",
         "points_up": [
             [
                 476,
@@ -283,5 +283,11 @@
         ],
         "lanes_down": 2,
         "num_dashes_down": 4.0
+    },
+    "i64_mm247.5": {
+     "name": "I-64 / MM 247.5 / EB",
+     "url": "https://media-sfs1.vdotcameras.com/rtplive/HamptonRoads850/chunklist_w1850819742.m3u8"
     }
+
 }
+

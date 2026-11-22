@@ -148,15 +148,18 @@ def render_dashboard(
     annotated = frame.copy()
     h, w = frame.shape[:2]
 
-    if bev_boxes:
+    if bev_boxes is not None and len(bev_boxes) > 0:
         box_colors = [COLOR_BEV_UP, COLOR_BEV_DOWN]
         for idx, box in enumerate(bev_boxes):
-            if box is not None and len(box) == 4:
-                bev_pts = box.reshape((-1, 1, 2)).astype(np.int32)
+            if box is None:
+                continue
+            arr = np.asarray(box)
+            if arr.ndim == 2 and arr.shape[0] >= 3 and arr.shape[1] == 2 and not np.all(arr == 0):
+                pts = np.round(arr).astype(np.int32).reshape((-1, 1, 2))
                 color = box_colors[idx % len(box_colors)]
                 cv2.polylines(
                     annotated,
-                    [bev_pts],
+                    [pts],
                     isClosed=True,
                     color=color,
                     thickness=2,
@@ -490,7 +493,8 @@ def main():
     font = cv2.FONT_HERSHEY_SIMPLEX
 
     source_key = config["gui"]["source"]
-    save_images = config["gui"]["save-images"]
+    save_images = config.getboolean("gui", "save-images")
+    flag_speed = config.getfloat("gui", "flag-speed")
     print(f"[*] Initializing stream from: {source_key}")
     stream = CCTVStream(source_key)
 
@@ -722,7 +726,7 @@ def main():
                         else:
                             velocity, speed = (0.0, 0.0), None
 
-                        # Flag when vehicle speed is 120% greater than average
+                        # Flag when vehicle speed is 1.xx greater than average
                         if speed is not None:
                             print(f"#{track_id} {direction} speed: {speed:.2f} MPH")
                             vehicle_speeds[track_id] = (speed, direction)
@@ -730,7 +734,7 @@ def main():
                                 avg_speed = analytics.average_vehicle_speed_up
                             if (direction == "down"):
                                 avg_speed = analytics.average_vehicle_speed_down
-                            if (speed > (avg_speed * 1.20) and avg_speed != 0):
+                            if (speed > (avg_speed * flag_speed) and avg_speed != 0):
                                 print(f"* High speed Detected * [{track_id} {direction}]: {speed:.2f} MPH -> "
                                       f"{(speed/avg_speed)*100:.1f}% faster than average "
                                       f"({avg_speed:.2f} MPH)")
