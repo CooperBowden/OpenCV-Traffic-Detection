@@ -439,8 +439,10 @@ def setup_bev_transform(
 
 def load_camera_config(source_key: str):
     """Helper to safely load camera calibration config from config.json."""
+    basepath = os.path.dirname(__file__)
+    filepath = os.path.abspath(os.path.join(basepath, "..", "config.json"))
     try:
-        with open("../config.json", "r") as file:
+        with open(filepath, "r") as file:
             data = json.load(file)
     except FileNotFoundError:
         data = {}
@@ -480,8 +482,11 @@ def load_camera_config(source_key: str):
 
 
 def main():
+    basepath = os.path.dirname(__file__)
+    settings_path = os.path.abspath(os.path.join(basepath, "..", "settings.ini"))
     config = configparser.ConfigParser()
-    config.read("../settings.ini")
+
+    config.read(settings_path)
     font = cv2.FONT_HERSHEY_SIMPLEX
 
     source_key = config["gui"]["source"]
@@ -619,6 +624,8 @@ def main():
             else:
                 matrix_down = None
                 matrix_up = None
+                src_pts_up = (0,0,0,0)
+                src_pts_down = (0,0,0,0)
 
 
             active_vehicles = []
@@ -825,8 +832,8 @@ def main():
             for tid in list(vehicle_speeds.keys()):
                 if tid not in current_active_ids:
                     del vehicle_speeds[tid]
-
-            update_master_trajectory_store(track_history, store_file=(f"../point_clouds/trajectories_{source_key}.npz"))
+            point_clouds_path = os.path.abspath(os.path.join(basepath, "..", "point_clouds", f"trajectories_{source_key}.npz"))
+            update_master_trajectory_store(track_history, point_clouds_path)
 
             # FPS counter
             now = time.time()
@@ -890,12 +897,12 @@ def main():
         elif key in (ord("c"), ord("C")):
             # Auto-calibrate dual trapezoids
             if (save_images == True):
-                cv2.imwrite("../screenshots/frame.png", frame)
-                cv2.imwrite("../screenshots/annotated_frame.png", annotated_frame)
+                cv2.imwrite(os.path.abspath(os.path.join(basepath, "..", "frame.png")), frame)
+                cv2.imwrite(os.path.abspath(os.path.join(basepath, "..", "annotated_frame.png")), annotated_frame)
 
             res = auto_calibrate(
                 frame=frame,
-                store_file=(f"../point_clouds/trajectories_{source_key}.npz"),
+                store_file=(point_clouds_path),
                 save_images=save_images
             )
             (
@@ -908,7 +915,7 @@ def main():
             # Generate perspective transforms for length calculation
             if coords_up is not None:
                 if (save_images == True): cv2.imwrite(
-                    "../screenshots/bev_frame_annotated_up.png", bev_frame_annotated_up)
+                    os.path.abspath(os.path.join(basepath, "..", "bev_frame_annotated_up.png")), bev_frame_annotated_up)
                 (
                     matrix_up,
                     bev_frame_annotated_up,
@@ -926,11 +933,11 @@ def main():
                         num_lanes=num_lanes_up,
                         save_images=save_images)
                     if (save_images == True): cv2.imwrite(
-                        "../screenshots/bev_frame_masked_up.png", bev_frame_masked_up)
+                        os.path.abspath(os.path.join(basepath, "..", "bev_frame_masked_up.png")), bev_frame_masked_up)
 
             if coords_down is not None:
                 if (save_images == True): cv2.imwrite(
-                    "../screenshots/bev_frame_annotated_down.png", bev_frame_annotated_down)
+                    os.path.abspath(os.path.join(basepath, "..", "bev_frame_annotated_down.png")), bev_frame_annotated_down)
                 (
                     matrix_down,
                     bev_frame_annotated_down,
@@ -947,7 +954,7 @@ def main():
                         display_scale=display_scale,
                         num_lanes=num_lanes_down)
                     if (save_images == True): cv2.imwrite(
-                        "../screenshots/bev_frame_masked_down.png", bev_frame_masked_down)
+                        os.path.abspath(os.path.join(basepath, "..", "bev_frame_masked_down.png")), bev_frame_masked_down)
 
             try:
                 with open("../config.json", "r") as file:

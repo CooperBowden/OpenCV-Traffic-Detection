@@ -127,6 +127,7 @@ def auto_calibrate(
     :param store_file: file to store point cloud
     :return: lane coordinates and number of lanes both up and down
     """
+    basepath = os.path.dirname(__file__)
     if not os.path.exists(store_file):
         print(f"[!] Store file '{store_file}' not found.")
         return None, None
@@ -138,12 +139,12 @@ def auto_calibrate(
     filter_up = filter_pts(up_pts)
     filter_down = filter_pts(down_pts)
     point_cloud = plot_point_cloud_on_frame(frame=frame.copy(), radius=1, pts_up=filter_up, pts_down=filter_down)
-    if (save_images == True): cv2.imwrite("../screenshots/point_cloud.png", point_cloud)
+    if (save_images == True): cv2.imwrite(os.path.abspath(os.path.join(basepath, "..", "point_cloud.png")), point_cloud)
     print("filter up points: " + (str) (len(up_pts) - len(filter_up)))
     print("filter down points: " + (str) (len(down_pts) - len(filter_down)))
     annotated_up, lane_lines_up, num_lanes_up  = plot_lane_peaks(frame=frame, pts=filter_up)
     annotated_down, lane_lines_down, num_lanes_down = plot_lane_peaks(frame=annotated_up, pts=filter_down)
-    cv2.imwrite('../screenshots/traffic_peaks.png', annotated_down)
+    if (save_images == True): cv2.imwrite(os.path.abspath(os.path.join(basepath, "..", "traffic_peaks.png"), annotated_down))
     coords_up = calculate_bounds(lane_lines_up)
     coords_down = calculate_bounds(lane_lines_down)
     return coords_up, coords_down, num_lanes_up, num_lanes_down

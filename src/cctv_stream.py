@@ -18,8 +18,10 @@ from typing import Optional, Tuple, Union
 import cv2
 import numpy as np
 
+basepath = os.path.dirname(__file__)
+filepath = os.path.abspath(os.path.join(basepath, "..", "config.json"))
 # Preset Traffic Cameras
-with open("../config.json", "r") as file:
+with open(filepath, "r") as file:
     PRESET_CAMERAS = json.load(file)
 
 

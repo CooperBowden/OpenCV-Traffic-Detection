@@ -19,7 +19,7 @@ https://docs.google.com/presentation/d/1yWclhNMFJSK7WHIh2EgWyXcRGWDn5_8g_gecZKst
         "name": "display name",
         "url": "URL to stream or path to local video",}
    ```
-3. Run the program via the command line with ```python main.py```
+3. Run the program via the command line with ```python src/main.py```
 
 ## Features
 
