@@ -3,6 +3,7 @@ import cv2
 import math
 import os
 
+
 def calculate_vehicle_speed(
     bev_history: list,
     bev_height: int,
@@ -11,25 +12,38 @@ def calculate_vehicle_speed(
     fps: float = 30.0,
     margin_percent: float = 0.25,
 ) -> tuple[tuple[float, float], float]:
-    """Calculates vehicle speed (MPH) using speed trap of birds eye view
+    """Calculates vehicle speed and velocity vector using a virtual BEV speed trap.
 
-    Parameters:
-        bev_history (list): List/deque of tracked (x, y) coordinates in BEV space.
-        bev_height (int): Height of the BEV frame canvas (pixels).
-        length (int): box length in feet
-        fps (float): Target video frame rate.
-        margin_percent (float): Inset safety margin from top/bottom drawn edges (default 0.25 = 25%).
+    Defines entry (Line A) and exit (Line B) thresholds inset from the top and
+    bottom edges of the Bird's-Eye View (BEV) canvas[cite: 1]. When a vehicle crosses the
+    exit line on the current frame step, sub-frame linear interpolation is used
+    to determine the exact fractional frame delta between crossings and convert
+    the known physical trap distance into miles per hour (MPH)[cite: 1].
+
+    Args:
+        bev_history: Ordered sequence of tracked `(x, y)` coordinates in BEV
+            pixel space[cite: 1].
+        bev_height: Height of the BEV frame canvas in pixels[cite: 1].
+        length: Total real-world longitudinal length of the BEV zone in feet[cite: 1].
+        direction: Travel direction (`"down"` for top-to-bottom motion; any
+            other value is treated as bottom-to-top motion)[cite: 1].
+        fps: Target video frame rate in frames per second. Defaults to 30.0[cite: 1].
+        margin_percent: Fractional inset safety margin applied to both the top
+            and bottom edges to position the trap lines. Defaults to 0.25[cite: 1].
 
     Returns:
-        (vx_mph, vy_mph) (tuple): Velocity vector components in MPH.
-        speed_mph (float): Vehicle speed in MPH.
+        A 2-tuple `((vx_mph, vy_mph), speed_mph)` containing the 2D velocity
+        components in MPH and the scalar speed in MPH[cite: 1]. Returns
+        `((0.0, 0.0), None)` if fewer than 2 points exist, inputs are invalid,
+        or the vehicle has not completed both trap-line crossings on this
+        step; returns `((0.0, 0.0), 0.0)` if computed speed is under 1.0 MPH[cite: 1].
     """
     if len(bev_history) < 2 or fps <= 0 or bev_height <= 0:
         return (0.0, 0.0), None
 
     pts = list(bev_history)
     # Define Trap Line Y-coordinates
-    if (direction == "down"):
+    if direction == "down":
         line_a_y = bev_height * margin_percent
         line_b_y = bev_height * (1.0 - margin_percent)
     else:
@@ -44,7 +58,7 @@ def calculate_vehicle_speed(
     y_curr_step = pts[-1][1]
 
     just_crossed_b = (y_prev_step < line_b_y <= y_curr_step) or (
-            y_prev_step > line_b_y >= y_curr_step
+        y_prev_step > line_b_y >= y_curr_step
     )
 
     # If Line B was not crossed on this frame step, exit early
@@ -61,7 +75,7 @@ def calculate_vehicle_speed(
     for i in range(1, len(pts)):
         y_prev, y_curr = pts[i - 1][1], pts[i][1]
         if (
-                (y_prev < line_a_y <= y_curr) or (y_prev > line_a_y >= y_curr)
+            (y_prev < line_a_y <= y_curr) or (y_prev > line_a_y >= y_curr)
         ) and idx_a is None:
             dy = y_curr - y_prev
             ratio = (line_a_y - y_prev) / dy if dy != 0 else 0.0
@@ -83,7 +97,7 @@ def calculate_vehicle_speed(
         speed_mph = None
         vx_mph, vy_mph = None, None
     if speed_mph != None:
-    # Filter out tracking jitter for stationary objects
+        # Filter out tracking jitter for stationary objects
         if speed_mph < 1.0:
             return (0.0, 0.0), 0.0
 
@@ -99,21 +113,33 @@ def calculate_vehicle_speed(
             vx_mph, vy_mph = 0.0, 0.0
     return (vx_mph, vy_mph), speed_mph
 
+
 def estimate_bev_length(
-        bev_frame: np.ndarray, display_scale, num_lanes: int, save_images: bool = False
+    bev_frame: np.ndarray,
+    display_scale,
+    num_lanes: int,
+    save_images: bool = False,
 ) -> float:
-    """Estimate length of frame
+    """Estimates the real-world length of a BEV frame from painted lane dashes.
 
-    Accurately counts painted dashes in BEV space by sampling narrow vertical
-    strips along lane divider lines rather than averaging the full image width.
-    Uses masked BEV frame to remove vehicles to isolate dashes
+    Thresholds and morphologically filters narrow vertical strips along estimated
+    lane divider positions on a vehicle-masked BEV image, filters out clipped
+    or outlier dash contours via IQR, and scales pixel height to feet using a
+    standard 10-foot highway dash reference[cite: 1].
 
-    Paramters:
-        bev_frame (array): cv frame object
-        display_scale (float): multiplier for display scaling
-        num_lanes(int): how many lanes are on the road
-    return:
-        float: real world length of bev frame in feet
+    Args:
+        bev_frame: Bird's-Eye View BGR or grayscale image frame (typically with
+            vehicles masked out)[cite: 1].
+        display_scale: Scaling multiplier applied to the display frame relative
+            to native resolution[cite: 1].
+        num_lanes: Number of traffic lanes spanned by `bev_frame`[cite: 1].
+        save_images: Whether to save the annotated dash visualization to
+            `../screenshots/dash_length_estimation.png`. Defaults to False[cite: 1].
+
+    Returns:
+        Estimated real-world longitudinal length of the BEV region in feet[cite: 1].
+        Returns `3.0` if `bev_frame` is `None` or empty, and `0` if no valid
+        lane dashes are detected[cite: 1].
     """
     basepath = os.path.dirname(__file__)
     if bev_frame is None or bev_frame.size == 0:
@@ -150,7 +176,12 @@ def estimate_bev_length(
 
         # Slice narrow isolated vertical strip along the divider line
         strip = binary[:, x_start:x_end]
-        cv2.imwrite(os.path.abspath(os.path.join(basepath, "..", "screenshots", "dash_strip.png")), strip)
+        cv2.imwrite(
+            os.path.abspath(
+                os.path.join(basepath, "..", "screenshots", "dash_strip.png")
+            ),
+            strip,
+        )
         # Extract contours within this specific lane segment
         contours, _ = cv2.findContours(
             strip, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
@@ -165,7 +196,7 @@ def estimate_bev_length(
                 pt_start = (x_mid_global, y)
                 pt_end = (x_mid_global, y + bh)
                 # find distance of points and add to list
-                dash_lengths.append((math.dist(pt_start, pt_end)/ display_scale))
+                dash_lengths.append(math.dist(pt_start, pt_end) / display_scale)
                 # Draw single centerline per dash
                 cv2.line(
                     viz_frame,
@@ -176,11 +207,18 @@ def estimate_bev_length(
                     lineType=cv2.LINE_AA,
                 )
     # return 0 if can't calculate
-    if (len(dash_lengths) == 0):
+    if len(dash_lengths) == 0:
         return 0
 
-    # filter outliers/clipped dashes
     def remove_outliers_iqr(list):
+        """Filters numeric outliers outside 1.5x the interquartile range (IQR)[cite: 1].
+
+        Args:
+            list: Sequence of numeric measurements[cite: 1].
+
+        Returns:
+            List of values falling within `[Q1 - 1.5 * IQR, Q3 + 1.5 * IQR]`[cite: 1].
+        """
         q1 = np.percentile(list, 25)
         q3 = np.percentile(list, 75)
         iqr = q3 - q1
@@ -190,15 +228,26 @@ def estimate_bev_length(
 
         # Filter the list
         return [x for x in list if lower_bound <= x <= upper_bound]
+
     filtered_lengths = remove_outliers_iqr(dash_lengths)
     avg_length = sum(filtered_lengths) / float(len(filtered_lengths))
 
     ft_per_px = 10.0 / avg_length  # how many feet per pixel of the frame
-    frame_length_px = bev_frame.shape[:2][0]/display_scale
+    frame_length_px = bev_frame.shape[:2][0] / display_scale
     frame_length_ft = frame_length_px * ft_per_px  # length of frame in feet
 
-    if (save_images == True): cv2.imwrite(os.path.abspath(os.path.join(basepath, "..", "screenshots",
-                                                                       "dash_length_estimation.png")), viz_frame)
+    if save_images == True:
+        cv2.imwrite(
+            os.path.abspath(
+                os.path.join(
+                    basepath,
+                    "..",
+                    "screenshots",
+                    "dash_length_estimation.png",
+                )
+            ),
+            viz_frame,
+        )
     # cv2.waitKey(0)
     # cv2.destroyAllWindows()
     return frame_length_ft

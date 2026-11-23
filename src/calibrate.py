@@ -10,15 +10,30 @@ import math
 
 
 def update_master_trajectory_store(
-        track_history,
-        store_file="trajectories_store.npz",
-        grid_size=5,  # Bin points into 5x5 pixel spatial cells
-        max_pts_per_cell=15,  # Cap points per cell so lanes don't over-fill
-        max_pts=10000  # Master memory cap
+    track_history,
+    store_file="trajectories_store.npz",
+    grid_size=5,  # Bin points into 5x5 pixel spatial cells
+    max_pts_per_cell=15,  # Cap points per cell so lanes don't over-fill
+    max_pts=10000,  # Master memory cap
 ):
-    """
-    Updates the master trajectory store without duplicate point dumping.
-    Uses 2D Spatial Grid Deduplication to allow data collection over hours/days.
+    """Updates the master trajectory store using 2D spatial grid deduplication[cite: 2].
+
+    Extracts the latest ground point from each sufficiently long active track,
+    classifies movement direction along the vertical image axis, merges with
+    existing historical points on disk, and caps spatial density so long-running
+    collection does not exhaust memory[cite: 2].
+
+    Args:
+        track_history: Mapping of vehicle track IDs to ordered sequences of
+            `(x, y)` ground-plane coordinates[cite: 2].
+        store_file: Path to the `.npz` archive storing `"up"` and `"down"`
+            point clouds. Defaults to `"trajectories_store.npz"`[cite: 2].
+        grid_size: Side length in pixels of each square spatial deduplication
+            bin. Defaults to 5[cite: 2].
+        max_pts_per_cell: Maximum number of points retained per spatial grid
+            cell. Defaults to 15[cite: 2].
+        max_pts: Maximum total number of points retained per direction.
+            Defaults to 10000[cite: 2].
     """
     pts_up = []
     pts_down = []
@@ -70,19 +85,37 @@ def update_master_trajectory_store(
     merged_down = _combine_arrays(hist_down, curr_down)
 
     # 5. Apply SPATIAL GRID DEDUPLICATION (Keeps spatial coverage, prevents filling up)
-    master_up = _deduplicate_spatially(merged_up, grid_size, max_pts_per_cell, max_pts)
-    master_down = _deduplicate_spatially(merged_down, grid_size, max_pts_per_cell, max_pts)
+    master_up = _deduplicate_spatially(
+        merged_up, grid_size, max_pts_per_cell, max_pts
+    )
+    master_down = _deduplicate_spatially(
+        merged_down, grid_size, max_pts_per_cell, max_pts
+    )
 
     # 6. Save updated master lists back to disk
     np.savez(store_file, up=master_up, down=master_down)
     # print(f"[+] Master store updated: {len(master_up)} 'up' / {len(master_down)} 'down' total points.")
 
 
-def _deduplicate_spatially(pts: np.ndarray, grid_size: int, max_per_cell: int, max_pts: int) -> np.ndarray:
-    """
-    Bins 2D points into a spatial pixel grid (e.g. 5x5 px).
-    Limits point count per grid cell so long runs collect wide road geometry
-    without filling memory buffers on repetitive traffic paths.
+def _deduplicate_spatially(
+    pts: np.ndarray, grid_size: int, max_per_cell: int, max_pts: int
+) -> np.ndarray:
+    """Bins 2D points into a spatial pixel grid and caps density per cell[cite: 2].
+
+    Iterates in reverse chronological order so newer trajectory points are
+    prioritized while preserving broad spatial road coverage within memory
+    limits[cite: 2].
+
+    Args:
+        pts: Array of shape `(N, 2)` containing `(x, y)` coordinates ordered
+            from oldest to newest[cite: 2].
+        grid_size: Side length in pixels of each spatial grid cell[cite: 2].
+        max_per_cell: Maximum number of points allowed in a single grid cell[cite: 2].
+        max_pts: Maximum total number of points to retain across all cells[cite: 2].
+
+    Returns:
+        An array of shape `(M, 2)` containing the deduplicated points in
+        chronological order, where `M <= max_pts`[cite: 2].
     """
     if len(pts) == 0:
         return pts
@@ -111,21 +144,43 @@ def _deduplicate_spatially(pts: np.ndarray, grid_size: int, max_per_cell: int, m
 
 
 def _combine_arrays(hist: np.ndarray, curr: np.ndarray) -> np.ndarray:
-    """Helper to safely stack historical and current point matrices."""
+    """Vertically stacks historical and current 2D point arrays[cite: 2].
+
+    Args:
+        hist: Historical point array of shape `(N, 2)`[cite: 2].
+        curr: Current frame point array of shape `(M, 2)`[cite: 2].
+
+    Returns:
+        A combined `(N + M, 2)` array, or whichever input array is non-empty[cite: 2].
+    """
     if len(hist) > 0 and len(curr) > 0:
         return np.vstack((hist, curr))
     return curr if len(curr) > 0 else hist
 
+
 def auto_calibrate(
     frame: np.ndarray,
     store_file="trajectories_store.npz",
-    save_images: bool = False
+    save_images: bool = False,
 ):
-    """master function to calculate and return a BEV frame aligned to the road lines
+    """Automatically estimates upstream and downstream road bounds and lane counts[cite: 2].
 
-    :param frame: cv2 frame object of highway
-    :param store_file: file to store point cloud
-    :return: lane coordinates and number of lanes both up and down
+    Loads historical vehicle trajectories, filters spatial outliers, fits
+    perspective lane centerlines, and computes 4-point road bounding trapezoids
+    for both traffic directions[cite: 2].
+
+    Args:
+        frame: BGR OpenCV video frame of the roadway[cite: 2].
+        store_file: Path to the `.npz` file containing accumulated `"up"` and
+            `"down"` point clouds. Defaults to `"trajectories_store.npz"`[cite: 2].
+        save_images: Whether to save intermediate point cloud and lane peak
+            visualizations to `../screenshots/`. Defaults to False[cite: 2].
+
+    Returns:
+        A 4-tuple `(coords_up, coords_down, num_lanes_up, num_lanes_down)`
+        containing the upstream and downstream 4-point bounding arrays and
+        their detected lane counts, or `(None, None)` if `store_file` does not
+        exist[cite: 2].
     """
     basepath = os.path.dirname(__file__)
     if not os.path.exists(store_file):
@@ -138,28 +193,58 @@ def auto_calibrate(
 
     filter_up = filter_pts(up_pts)
     filter_down = filter_pts(down_pts)
-    point_cloud = plot_point_cloud_on_frame(frame=frame.copy(), radius=1, pts_up=filter_up, pts_down=filter_down)
-    if (save_images == True): cv2.imwrite(os.path.abspath(os.path.join(basepath, "..", "screenshots", "point_cloud.png")),
-                                          point_cloud)
-    print("filter up points: " + (str) (len(up_pts) - len(filter_up)))
-    print("filter down points: " + (str) (len(down_pts) - len(filter_down)))
-    annotated_up, lane_lines_up, num_lanes_up  = plot_lane_peaks(frame=frame, pts=filter_up)
-    annotated_down, lane_lines_down, num_lanes_down = plot_lane_peaks(frame=annotated_up, pts=filter_down)
-    if (save_images == True): cv2.imwrite(os.path.abspath(os.path.join(basepath, "..", "screenshots", "traffic_peaks.png")),
-                                          annotated_down)
+    point_cloud = plot_point_cloud_on_frame(
+        frame=frame.copy(), radius=1, pts_up=filter_up, pts_down=filter_down
+    )
+    if save_images == True:
+        cv2.imwrite(
+            os.path.abspath(
+                os.path.join(basepath, "..", "screenshots", "point_cloud.png")
+            ),
+            point_cloud,
+        )
+    print("filter up points: " + (str)(len(up_pts) - len(filter_up)))
+    print("filter down points: " + (str)(len(down_pts) - len(filter_down)))
+    annotated_up, lane_lines_up, num_lanes_up = plot_lane_peaks(
+        frame=frame, pts=filter_up
+    )
+    annotated_down, lane_lines_down, num_lanes_down = plot_lane_peaks(
+        frame=annotated_up, pts=filter_down
+    )
+    if save_images == True:
+        cv2.imwrite(
+            os.path.abspath(
+                os.path.join(basepath, "..", "screenshots", "traffic_peaks.png")
+            ),
+            annotated_down,
+        )
     coords_up = calculate_bounds(lane_lines_up)
     coords_down = calculate_bounds(lane_lines_down)
     return coords_up, coords_down, num_lanes_up, num_lanes_down
+
 
 def detect_num_lanes(
     pts: np.ndarray,
     num_slices: int = 8,
     prominence_ratio: float = 0.05,
 ) -> int:
-    """calculates the number of lanes
+    """Estimates the number of active traffic lanes from a vehicle point cloud[cite: 2].
 
-    Detects active lane count by running peak detection on the vehicle point cloud across multiple thin horizontal
-    slices to eliminate perspective slant smearing.
+    Divides the vertical span of the point cloud into thin horizontal slices,
+    corrects for overall road slope, and runs 1D smoothed histogram peak
+    detection across each slice to determine the majority lane count without
+    perspective slant smearing[cite: 2].
+
+    Args:
+        pts: Point cloud array of shape `(N, 2)` containing `(x, y)` vehicle
+            positions[cite: 2].
+        num_slices: Number of horizontal depth slices to evaluate. Defaults to 8[cite: 2].
+        prominence_ratio: Minimum peak prominence expressed as a fraction of the
+            maximum smoothed density in each slice. Defaults to 0.05[cite: 2].
+
+    Returns:
+        The estimated number of lanes (at least 1). Defaults to 3 if `pts`
+        contains fewer than 15 points or yields no valid peaks[cite: 2].
     """
     if pts is None or len(pts) < 15:
         return 3
@@ -167,7 +252,7 @@ def detect_num_lanes(
     # 1. Focus on the main active Y region (20th to 80th percentile)
     y_vals = pts[:, 1]
     y_min, y_max = np.percentile(y_vals, [20.0, 80.0])
-    #account for slope of road
+    # account for slope of road
     m_slope, _ = np.polyfit(pts[:, 1], pts[:, 0], deg=1)
     slice_edges = np.linspace(y_min, y_max, num_slices + 1)
     detected_counts = []
@@ -182,7 +267,7 @@ def detect_num_lanes(
         if len(slice_pts) < 10:
             continue
 
-        #account for slope of road
+        # account for slope of road
         x_coords = slice_pts[:, 0] - m_slope * (slice_pts[:, 1] - y_center)
         # Filter extreme horizontal outliers in this slice
         p2, p98 = np.percentile(x_coords, [2.0, 98.0])
@@ -237,16 +322,24 @@ def detect_num_lanes(
 
 
 def filter_pts(pts, radius=5, min_neighbors=5, factor: float = 1.0):
-    """cleans the point cloud by removing outlier points
+    """Removes spatial and statistical outliers from a 2D vehicle point cloud[cite: 2].
 
-    pts (np.ndarray): Point cloud array of shape (N, 2) where column 0 is X and column 1 is Y.
-    radius (int): Radius of neighboring points.
-    min_neighbors (int): Minimum number of neighboring points.
-    factor (float): IQR multiplier:
-                    - 1.5: Standard Tukey threshold (strips moderate & extreme outliers).
-                    - 2.0 - 2.5: Milder filter (preserves wider lane-changes).
-                    - 1.0: Aggressive filter (tightly keeps core traffic).
-    :return: np.ndarray
+    Applies a k-d tree radial neighbor density filter followed by axis-aligned
+    interquartile range (IQR) filtering along both X and Y coordinates[cite: 2].
+
+    Args:
+        pts: Point cloud array of shape `(N, 2)` where column 0 is X and
+            column 1 is Y[cite: 2].
+        radius: Search radius in pixels for counting neighboring points.
+            Defaults to 5[cite: 2].
+        min_neighbors: Minimum number of neighbors within `radius` (excluding
+            the point itself) required to keep a point. Defaults to 5[cite: 2].
+        factor: IQR multiplier controlling outlier strictness (`1.0` for tight
+            core traffic filtering, `1.5` for standard Tukey bounds, `2.0` to
+            `2.5` for preserving wider lane changes). Defaults to 1.0[cite: 2].
+
+    Returns:
+        Filtered point cloud array of shape `(M, 2)` containing inlier points[cite: 2].
     """
     tree = cKDTree(pts)
     # Count neighbors within radius (excluding self)
@@ -271,6 +364,7 @@ def filter_pts(pts, radius=5, min_neighbors=5, factor: float = 1.0):
 
     return pts[mask]
 
+
 def plot_lane_peaks(
     frame: np.ndarray,
     pts: np.ndarray,
@@ -279,10 +373,31 @@ def plot_lane_peaks(
     peak_color: tuple = (0, 0, 255),  # Red (BGR)
     draw_peaks: bool = True,
 ) -> tuple[np.ndarray, int]:
-    """Fits perspective centerlines that converge to a shared horizon Vanishing Point
+    """Fits and draws perspective lane centerlines from a vehicle point cloud[cite: 2].
 
-        so lines naturally get closer together near the top of the road.
-        """
+    Extracts horizontal density peaks across depth slices and fits robust
+    Huber regression lines for each detected lane so lines converge naturally
+    toward the horizon vanishing point[cite: 2].
+
+    Args:
+        frame: BGR video frame onto which lane lines and labels are drawn[cite: 2].
+        pts: Point cloud array of shape `(N, 2)` representing vehicle ground
+            positions[cite: 2].
+        num_slices: Number of horizontal depth slices used to sample lane
+            centers. Defaults to 12[cite: 2].
+        line_color: BGR color tuple for fitted lane centerlines. Defaults to
+            `(0, 255, 255)`[cite: 2].
+        peak_color: BGR color tuple for slice peak markers. Defaults to
+            `(0, 0, 255)`[cite: 2].
+        draw_peaks: Whether to draw circles at individual slice peak locations.
+            Defaults to True[cite: 2].
+
+    Returns:
+        A 3-tuple `(annotated, lane_lines, num_lanes)` containing the annotated
+        BGR frame, a list of `((x_top, y_top), (x_bottom, y_bottom))` line
+        endpoint tuples, and the detected lane count[cite: 2]. Returns `(annotated, 0)`
+        if `pts` has fewer than 20 points or an invalid vertical span[cite: 2].
+    """
     annotated = frame.copy()
 
     if pts is None or len(pts) < 20:
@@ -363,7 +478,7 @@ def plot_lane_peaks(
         x_s = samples_arr[:, 0]  # X coordinates of red dots for this lane
         y_s = samples_arr[:, 1]  # Y coordinates of red dots for this lane
 
-        #estimate line position through avg x position in each slice
+        # estimate line position through avg x position in each slice
         line = cv2.fitLine(
             points=np.array(samples, dtype=np.float32),
             distType=cv2.DIST_HUBER,
@@ -371,7 +486,7 @@ def plot_lane_peaks(
             reps=0.01,
             aeps=0.01,
         )
-        #extract to 1d list
+        # extract to 1d list
         vx, vy, x0, y0 = line.ravel().tolist()
 
         # Line equation: X = x0 + (vx/vy)*(Y - y0)
@@ -418,17 +533,25 @@ def plot_lane_peaks(
 
     return annotated, lane_lines, num_lanes
 
+
 def calculate_bounds(
     drawn_lines: list, padding_factor: float = 1.0
 ) -> np.ndarray:
-    """Creates a 4-corner perspective road bounding box directly from drawn line endpoints.
+    """Builds a 4-corner perspective road trapezoid from fitted lane centerlines[cite: 2].
 
-    Parameters:
-        drawn_lines (list): List of line tuples
-        padding_factor (float): Outward padding multiplier (1.0 = 0.5 * lane_width per side).
+    Expands outward from the outermost left and right lane centerlines by half
+    an estimated lane width (scaled by `padding_factor`) at both the top and
+    bottom vertical bounds[cite: 2].
+
+    Args:
+        drawn_lines: List of `(pt_top, pt_bottom)` line endpoint tuples[cite: 2].
+        padding_factor: Outward width multiplier applied to the outer
+            half-lane padding (`1.0` equals `0.5 * lane_width` per side).
+            Defaults to 1.0[cite: 2].
 
     Returns:
-        np.ndarray: 4-point trapezoid array [[TL], [TR], [BR], [BL]]
+        An integer array of shape `(4, 2)` ordered as `[[TL], [TR], [BR],
+        [BL]]`, or an empty `(0, 2)` array if `drawn_lines` is empty[cite: 2].
     """
     if not drawn_lines:
         return np.empty((0, 2), dtype=np.int32)
@@ -487,10 +610,21 @@ def plot_point_cloud_on_frame(
     pts_down: np.ndarray = None,
     radius: int = 2,
 ):
-    """Overlays directional point clouds onto an OpenCV video frame.
+    """Overlays upstream and downstream trajectory point clouds onto a frame[cite: 2].
 
-    - Upstream traffic (pts_up): Blue
-    - Downstream traffic (pts_down): Orange
+    Draws upstream points in blue `(255, 100, 0)` and downstream points in
+    orange `(0, 165, 255)` on a copy of the input BGR image[cite: 2].
+
+    Args:
+        frame: Input BGR OpenCV video frame[cite: 2].
+        pts_up: Optional `(N, 2)` array of upstream `(x, y)` coordinates.
+            Defaults to None[cite: 2].
+        pts_down: Optional `(M, 2)` array of downstream `(x, y)` coordinates.
+            Defaults to None[cite: 2].
+        radius: Circle radius in pixels for each plotted point. Defaults to 2[cite: 2].
+
+    Returns:
+        A copy of `frame` with the trajectory points drawn onto it[cite: 2].
     """
     canvas = frame.copy()
 

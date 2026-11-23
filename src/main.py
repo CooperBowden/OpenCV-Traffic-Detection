@@ -1,4 +1,4 @@
-"""Vehicle identification and speed estimation using CCTV cameras
+"""Vehicle identification and speed estimation using CCTV cameras.
 
 Author: Cooper Bowden
 Date: 2026-11-14
@@ -40,7 +40,6 @@ COLOR_BEV_UP = (255, 0, 0)
 COLOR_BEV_DOWN = (0, 165, 255)
 
 
-
 def draw_translucent_panel(
     frame: np.ndarray,
     x: int,
@@ -51,6 +50,20 @@ def draw_translucent_panel(
     alpha: float = 0.75,
     border_color: Tuple[int, int, int] = (60, 70, 80),
 ) -> None:
+    """Draws a semi-transparent rectangular overlay panel onto a frame in-place[cite: 3].
+
+    Args:
+        frame: The BGR image frame to draw on[cite: 3].
+        x: Top-left x-coordinate of the panel in pixels[cite: 3].
+        y: Top-left y-coordinate of the panel in pixels[cite: 3].
+        w: Width of the panel in pixels[cite: 3].
+        h: Height of the panel in pixels[cite: 3].
+        bg_color: BGR background fill color. Defaults to COLOR_HUD_BG[cite: 3].
+        alpha: Opacity weight between 0.0 (transparent) and 1.0 (opaque).
+            Defaults to 0.75[cite: 3].
+        border_color: BGR color for the 1-pixel outer border. If None, no
+            border is drawn. Defaults to (60, 70, 80)[cite: 3].
+    """
     fh, fw = frame.shape[:2]
     x1, y1 = max(0, x), max(0, y)
     x2, y2 = min(fw, x + w), min(fh, y + h)
@@ -67,8 +80,20 @@ def draw_translucent_panel(
 
 
 class highway_analytics:
+    """Tracks and aggregates real-time highway traffic and FPS statistics[cite: 3].
+
+    Attributes:
+        seen_vehicles: Set of unique vehicle tracking IDs observed[cite: 3].
+        recorded_speeds: Set of tracking IDs whose speeds have already been
+            sampled into the directional speed histories[cite: 3].
+        speed_history_up: Bounded deque of recent upstream speeds in MPH[cite: 3].
+        speed_history_down: Bounded deque of recent downstream speeds in MPH[cite: 3].
+        fps_history: Bounded deque of recent instantaneous FPS measurements[cite: 3].
+        start_time: Unix timestamp when tracking started or was last reset[cite: 3].
+    """
 
     def __init__(self):
+        """Initializes empty vehicle tracking sets and rolling metric histories[cite: 3]."""
         self.seen_vehicles = set()
         self.recorded_speeds = set()  # Track which IDs have already been averaged
         self.speed_history_up = deque(maxlen=60)
@@ -77,14 +102,23 @@ class highway_analytics:
         self.start_time = time.time()
 
     def update(self, active_vehicles: List[dict], fps: float):
+        """Updates vehicle counts, directional speed histories, and FPS history[cite: 3].
+
+        Args:
+            active_vehicles: List of tracked vehicle dictionaries for the
+                current frame, each containing `"id"`, `"speed"`, and
+                `"direction"` keys[cite: 3].
+            fps: Instantaneous processing frame rate for the current loop
+                iteration[cite: 3].
+        """
         for v in active_vehicles:
             tid = v["id"]
             self.seen_vehicles.add(tid)
 
             if (
-                    tid not in self.recorded_speeds
-                    and v["speed"] is not None
-                    and v["speed"] >= 0.6
+                tid not in self.recorded_speeds
+                and v["speed"] is not None
+                and v["speed"] >= 0.6
             ):
                 if v["direction"] == "up":
                     self.speed_history_up.append(v["speed"])
@@ -98,26 +132,41 @@ class highway_analytics:
 
     @property
     def total_vehicles(self) -> int:
+        """int: Total count of unique vehicles observed since last reset[cite: 3]."""
         return len(self.seen_vehicles)
 
     @property
     def average_vehicle_speed_up(self) -> float:
+        """float: Mean speed (MPH) of recorded upstream vehicles, or 0.0[cite: 3]."""
         return (
             float(np.mean(self.speed_history_up)) if self.speed_history_up else 0.0
         )
+
     @property
     def average_vehicle_speed_down(self) -> float:
+        """float: Mean speed (MPH) of recorded downstream vehicles, or 0.0[cite: 3]."""
         return (
             float(np.mean(self.speed_history_down)) if self.speed_history_down else 0.0
         )
 
     @property
     def smoothed_fps(self) -> float:
+        """float: Rolling average FPS over recent frames, or 0.0 if empty[cite: 3]."""
         return float(np.mean(self.fps_history)) if self.fps_history else 0.0
 
     def get_traffic_density_label(
         self, active_veh_count: int
     ) -> Tuple[str, Tuple[int, int, int]]:
+        """Classifies current traffic congestion and returns a display color[cite: 3].
+
+        Args:
+            active_veh_count: Number of vehicles currently active in the frame[cite: 3].
+
+        Returns:
+            A tuple of `(density_label, bgr_color)`, where `density_label` is
+            one of `"Clear"`, `"Light"`, `"Moderate"`, or `"Heavy"`, and
+            `bgr_color` is the corresponding BGR color tuple[cite: 3].
+        """
         if active_veh_count == 0:
             return "Clear", (100, 200, 100)
         elif active_veh_count <= 4:
@@ -128,6 +177,7 @@ class highway_analytics:
             return "Heavy", (50, 50, 240)
 
     def reset(self):
+        """Resets all accumulated vehicle counts, speed histories, and timer[cite: 3]."""
         self.seen_vehicles.clear()
         self.recorded_speeds.clear()
         self.speed_history_up.clear()
@@ -145,6 +195,28 @@ def render_dashboard(
     show_hud: bool = True,
     bev_boxes: Optional[List[np.ndarray]] = None,
 ) -> np.ndarray:
+    """Renders vehicle detections, trajectories, BEV zones, and HUD overlays[cite: 3].
+
+    Args:
+        frame: Input BGR video frame[cite: 3].
+        stream: Active CCTVStream instance providing source metadata and buffer
+            status[cite: 3].
+        analytics: Analytics tracker supplying FPS and traffic flow metrics[cite: 3].
+        distances: Two-element list `[distance_up, distance_down]` representing
+            calibrated zone lengths in feet[cite: 3].
+        active_vehicles: List of tracked vehicle dictionaries containing
+            `"box"`, `"id"`, `"class"`, `"speed"`, and `"history"` keys[cite: 3].
+        show_trails: Whether to draw historical movement polylines behind
+            vehicles. Defaults to True[cite: 3].
+        show_hud: Whether to draw the top status bar, metrics panel, and bottom
+            controls bar. Defaults to True[cite: 3].
+        bev_boxes: Optional list of 2D polygon point arrays outlining the
+            upstream and downstream BEV calibration regions. Defaults to None[cite: 3].
+
+    Returns:
+        A copy of `frame` annotated with bounding boxes, trails, BEV outlines,
+        and HUD elements[cite: 3].
+    """
     annotated = frame.copy()
     h, w = frame.shape[:2]
 
@@ -154,7 +226,12 @@ def render_dashboard(
             if box is None:
                 continue
             arr = np.asarray(box)
-            if arr.ndim == 2 and arr.shape[0] >= 3 and arr.shape[1] == 2 and not np.all(arr == 0):
+            if (
+                arr.ndim == 2
+                and arr.shape[0] >= 3
+                and arr.shape[1] == 2
+                and not np.all(arr == 0)
+            ):
                 pts = np.round(arr).astype(np.int32).reshape((-1, 1, 2))
                 color = box_colors[idx % len(box_colors)]
                 cv2.polylines(
@@ -370,8 +447,10 @@ def render_dashboard(
         alpha=0.75,
         border_color=(40, 50, 60),
     )
-    controls_text = ("[SPACE] Pause/Resume   [H] Toggle HUD   [T] Toggle Trails   [R] Reset Counters   [Q] Quit   "
-                     "[C] Calibrate   [B] Toggle BEV")
+    controls_text = (
+        "[SPACE] Pause/Resume   [H] Toggle HUD   [T] Toggle Trails   "
+        "[R] Reset Counters   [Q] Quit   [C] Calibrate   [B] Toggle BEV"
+    )
     cv2.putText(
         annotated,
         controls_text,
@@ -394,6 +473,27 @@ def setup_bev_transform(
     bev_background: bool = True,
     num_lanes: int = 3,
 ):
+    """Computes a perspective transform and warps frames into a Bird's-Eye View[cite: 3].
+
+    Args:
+        road_coords: Array of four `(x, y)` corner coordinates defining the
+            source road trapezoid in `[tl, tr, br, bl]` order[cite: 3].
+        display_scale: Scaling factor applied to the display frame[cite: 3].
+        frame: Original BGR video frame[cite: 3].
+        masked_frame: BGR video frame with detected vehicles masked out for
+            unobstructed lane line extraction[cite: 3].
+        bev_background: If True, warps `frame` as the BEV background; if False,
+            uses a solid white background. Defaults to True[cite: 3].
+        num_lanes: Number of lanes used to draw evenly spaced vertical divider
+            lines on the BEV canvas. Defaults to 3[cite: 3].
+
+    Returns:
+        A 6-tuple `(matrix, bev_frame, bev_frame_masked, bev_width, bev_height,
+        src_pts)` containing the 3x3 perspective transform matrix, annotated
+        BEV image, vehicle-masked BEV image, output width, output height, and
+        source corner coordinates[cite: 3]. Returns `(None, None, 0, 0, None)` if
+        `road_coords` is invalid or yields non-positive dimensions[cite: 3].
+    """
     if road_coords is None or len(road_coords) != 4:
         return None, None, 0, 0, None
 
@@ -441,7 +541,18 @@ def setup_bev_transform(
 
 
 def load_camera_config(source_key: str):
-    """Helper to safely load camera calibration config from config.json."""
+    """Loads camera calibration coordinates and road parameters from config.json[cite: 3].
+
+    Args:
+        source_key: Identifier key for the camera feed in `../config.json`[cite: 3].
+
+    Returns:
+        A 7-tuple `(coords_up, coords_down, num_lanes_up, num_lanes_down,
+        distance_up, distance_down, dash_length)` containing upstream and
+        downstream corner coordinate arrays (`Optional[np.ndarray]`), lane
+        counts (`int`), real-world zone distances (`float` or `int`), and
+        road dash length (`float` or `int`)[cite: 3].
+    """
     basepath = os.path.dirname(__file__)
     filepath = os.path.abspath(os.path.join(basepath, "..", "config.json"))
     try:
@@ -485,6 +596,14 @@ def load_camera_config(source_key: str):
 
 
 def main():
+    """Runs the main CCTV vehicle tracking, speed estimation, and HUD loop[cite: 3].
+
+    Loads runtime configuration from `../settings.ini`, initializes the CCTV
+    stream and YOLO ByteTrack detector, transforms ground points into
+    Bird's-Eye View space to compute vehicle speeds, flags vehicles exceeding
+    the configured speed multiplier threshold, renders live analytics overlays,
+    and processes interactive keyboard shortcuts[cite: 3].
+    """
     basepath = os.path.dirname(__file__)
     settings_path = os.path.abspath(os.path.join(basepath, "..", "settings.ini"))
     config = configparser.ConfigParser()
@@ -520,7 +639,7 @@ def main():
         num_lanes_down,
         distance_up,
         distance_down,
-        dash_length
+        dash_length,
     ) = load_camera_config(source_key)
 
     bev_background = True
@@ -609,7 +728,12 @@ def main():
                     bev_h_up,
                     src_pts_up,
                 ) = setup_bev_transform(
-                    coords_up, display_scale, frame, masked_frame, bev_background, num_lanes_up
+                    coords_up,
+                    display_scale,
+                    frame,
+                    masked_frame,
+                    bev_background,
+                    num_lanes_up,
                 )
                 (
                     matrix_down,
@@ -629,9 +753,8 @@ def main():
             else:
                 matrix_down = None
                 matrix_up = None
-                src_pts_up = (0,0,0,0)
-                src_pts_down = (0,0,0,0)
-
+                src_pts_up = (0, 0, 0, 0)
+                src_pts_down = (0, 0, 0, 0)
 
             active_vehicles = []
             current_active_ids = set()
@@ -711,7 +834,6 @@ def main():
                             active_h = 0
                             active_dist = 0.0
 
-
                         if (
                             len(active_bev_hist) > 0
                             and active_h > 0
@@ -731,15 +853,16 @@ def main():
                         if speed is not None:
                             print(f"#{track_id} {direction} speed: {speed:.2f} MPH")
                             vehicle_speeds[track_id] = (speed, direction)
-                            if (direction == "up"):
+                            if direction == "up":
                                 avg_speed = analytics.average_vehicle_speed_up
-                            if (direction == "down"):
+                            if direction == "down":
                                 avg_speed = analytics.average_vehicle_speed_down
-                            if (speed > (avg_speed * flag_speed) and avg_speed != 0):
-                                print(f"* High speed Detected * [{track_id} {direction}]: {speed:.2f} MPH -> "
-                                      f"{(speed/avg_speed)*100:.1f}% faster than average "
-                                      f"({avg_speed:.2f} MPH)")
-
+                            if speed > (avg_speed * flag_speed) and avg_speed != 0:
+                                print(
+                                    f"* High speed Detected * [{track_id} {direction}]: {speed:.2f} MPH -> "
+                                    f"{(speed/avg_speed)*100:.1f}% faster than average "
+                                    f"({avg_speed:.2f} MPH)"
+                                )
 
                     cls_label = ALL_TARGET_CLASSES.get(
                         cls_id, model.names.get(cls_id, "object")
@@ -774,7 +897,11 @@ def main():
                         and 0 <= by_up < bev_h_up
                     ):
                         cv2.circle(
-                            bev_frame_annotated_up, (bx_up, by_up), 6, primary_color, -1
+                            bev_frame_annotated_up,
+                            (bx_up, by_up),
+                            6,
+                            primary_color,
+                            -1,
                         )
                         cv2.putText(
                             bev_frame_annotated_up,
@@ -837,7 +964,14 @@ def main():
             for tid in list(vehicle_speeds.keys()):
                 if tid not in current_active_ids:
                     del vehicle_speeds[tid]
-            point_clouds_path = os.path.abspath(os.path.join(basepath, "..", "point_clouds", f"trajectories_{source_key}.npz"))
+            point_clouds_path = os.path.abspath(
+                os.path.join(
+                    basepath,
+                    "..",
+                    "point_clouds",
+                    f"trajectories_{source_key}.npz",
+                )
+            )
             update_master_trajectory_store(track_history, point_clouds_path)
 
             # FPS counter
@@ -865,7 +999,7 @@ def main():
                 show_hud=show_hud,
                 bev_boxes=bev_boxes,
             )
-            if (matrix_down is None and matrix_up is None):
+            if matrix_down is None and matrix_up is None:
                 cv2.putText(
                     annotated_frame,
                     "Press C to calibrate for speed information",
@@ -901,16 +1035,26 @@ def main():
             print("[+] Intersection counters reset.")
         elif key in (ord("c"), ord("C")):
             # Auto-calibrate dual trapezoids
-            if (save_images == True):
-                cv2.imwrite(os.path.abspath(os.path.join(basepath, "..", "screenshots", "frame.png")),
-                            frame)
-                cv2.imwrite(os.path.abspath(os.path.join(basepath, "..", "screenshots", "annotated_frame.png")),
-                            annotated_frame)
+            if save_images == True:
+                cv2.imwrite(
+                    os.path.abspath(
+                        os.path.join(basepath, "..", "screenshots", "frame.png")
+                    ),
+                    frame,
+                )
+                cv2.imwrite(
+                    os.path.abspath(
+                        os.path.join(
+                            basepath, "..", "screenshots", "annotated_frame.png"
+                        )
+                    ),
+                    annotated_frame,
+                )
 
             res = auto_calibrate(
                 frame=frame,
-                store_file=(point_clouds_path),
-                save_images=save_images
+                store_file=point_clouds_path,
+                save_images=save_images,
             )
             (
                 coords_up,
@@ -921,9 +1065,18 @@ def main():
 
             # Generate perspective transforms for length calculation
             if coords_up is not None:
-                if (save_images == True): cv2.imwrite(
-                    os.path.abspath(os.path.join(basepath, "..", "screenshots", "bev_frame_annotated_up.png"))
-                    , bev_frame_annotated_up)
+                if save_images == True:
+                    cv2.imwrite(
+                        os.path.abspath(
+                            os.path.join(
+                                basepath,
+                                "..",
+                                "screenshots",
+                                "bev_frame_annotated_up.png",
+                            )
+                        ),
+                        bev_frame_annotated_up,
+                    )
                 (
                     matrix_up,
                     bev_frame_annotated_up,
@@ -932,24 +1085,48 @@ def main():
                     bev_h_up,
                     _,
                 ) = setup_bev_transform(
-                    coords_up, display_scale, frame, masked_frame, bev_background, num_lanes_up
+                    coords_up,
+                    display_scale,
+                    frame,
+                    masked_frame,
+                    bev_background,
+                    num_lanes_up,
                 )
                 if bev_frame_masked_up is not None:
                     distance_up = estimate_bev_length(
                         bev_frame_masked_up,
                         display_scale=display_scale,
                         num_lanes=num_lanes_up,
-                        save_images=save_images)
+                        save_images=save_images,
+                    )
                     print(f"Estimated length up: {distance_up:.2f}ft")
 
-                    if (save_images == True): cv2.imwrite(
-                        os.path.abspath(os.path.join(basepath, "..", "screenshots", "bev_frame_masked_up.png")),
-                        bev_frame_masked_up)
+                    if save_images == True:
+                        cv2.imwrite(
+                            os.path.abspath(
+                                os.path.join(
+                                    basepath,
+                                    "..",
+                                    "screenshots",
+                                    "bev_frame_masked_up.png",
+                                )
+                            ),
+                            bev_frame_masked_up,
+                        )
 
             if coords_down is not None:
-                if (save_images == True): cv2.imwrite(
-                    os.path.abspath(os.path.join(basepath, "..", "screenshots", "bev_frame_annotated_down.png")),
-                    bev_frame_annotated_down)
+                if save_images == True:
+                    cv2.imwrite(
+                        os.path.abspath(
+                            os.path.join(
+                                basepath,
+                                "..",
+                                "screenshots",
+                                "bev_frame_annotated_down.png",
+                            )
+                        ),
+                        bev_frame_annotated_down,
+                    )
                 (
                     matrix_down,
                     bev_frame_annotated_down,
@@ -958,17 +1135,32 @@ def main():
                     bev_h_down,
                     _,
                 ) = setup_bev_transform(
-                    coords_down, display_scale, frame, masked_frame, bev_background, num_lanes_down
+                    coords_down,
+                    display_scale,
+                    frame,
+                    masked_frame,
+                    bev_background,
+                    num_lanes_down,
                 )
                 if bev_frame_masked_down is not None:
                     distance_down = estimate_bev_length(
                         bev_frame_masked_down,
                         display_scale=display_scale,
-                        num_lanes=num_lanes_down)
+                        num_lanes=num_lanes_down,
+                    )
                     print(f"Estimated length down: {distance_down:.2f}ft")
-                    if (save_images == True): cv2.imwrite(
-                        os.path.abspath(os.path.join(basepath, "..", "screenshots", "bev_frame_masked_down.png")),
-                        bev_frame_masked_down)
+                    if save_images == True:
+                        cv2.imwrite(
+                            os.path.abspath(
+                                os.path.join(
+                                    basepath,
+                                    "..",
+                                    "screenshots",
+                                    "bev_frame_masked_down.png",
+                                )
+                            ),
+                            bev_frame_masked_down,
+                        )
 
             try:
                 with open("../config.json", "r") as file:
